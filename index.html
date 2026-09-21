@@ -1,0 +1,1921 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>AR Camera</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        :root {
+            --safe-top: env(safe-area-inset-top, 20px);
+            --safe-bottom: env(safe-area-inset-bottom, 20px);
+        }
+
+        body {
+            background: #000;
+            overflow: hidden;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            height: 100vh;
+            height: 100dvh;
+            width: 100vw;
+            position: fixed;
+            touch-action: none;
+        }
+
+        /* Camera Feed */
+        #cameraFeed {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1);
+            z-index: 1;
+        }
+
+        /* AR Canvas Overlay */
+        #arCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none;
+        }
+
+        /* Face tracking overlay */
+        #faceOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 3;
+            pointer-events: none;
+        }
+
+        /* Top Bar */
+        .top-bar {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            padding: var(--safe-top) 16px 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.5) 0%, transparent 100%);
+        }
+
+        .top-bar-btn {
+            width: 44px;
+            height: 44px;
+            border: none;
+            background: rgba(255,255,255,0.15);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: #fff;
+        }
+
+        .top-bar-btn:active {
+            transform: scale(0.9);
+            background: rgba(255,255,255,0.3);
+        }
+
+        .top-bar-btn svg {
+            width: 22px;
+            height: 22px;
+            fill: none;
+            stroke: #fff;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .top-bar-center {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .ar-badge {
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 4px 10px;
+            border-radius: 12px;
+            letter-spacing: 1px;
+        }
+
+        .tracking-status {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #fff;
+            font-size: 13px;
+            font-weight: 500;
+            background: rgba(0,0,0,0.3);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 6px 12px;
+            border-radius: 16px;
+        }
+
+        .tracking-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #22c55e;
+            animation: pulse 2s infinite;
+        }
+
+        .tracking-dot.lost {
+            background: #ef4444;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        /* AR Filters Carousel */
+        .filters-bar {
+            position: absolute;
+            bottom: 180px;
+            left: 0;
+            right: 0;
+            z-index: 10;
+            padding: 0 12px;
+        }
+
+        .filters-scroll {
+            display: flex;
+            gap: 12px;
+            overflow-x: auto;
+            padding: 8px 4px;
+            scroll-snap-type: x mandatory;
+            -webkit-overflow-scrolling: touch;
+            scrollbar-width: none;
+        }
+
+        .filters-scroll::-webkit-scrollbar {
+            display: none;
+        }
+
+        .filter-item {
+            flex-shrink: 0;
+            width: 64px;
+            height: 64px;
+            border-radius: 20px;
+            border: 2.5px solid rgba(255,255,255,0.3);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background: rgba(255,255,255,0.1);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            scroll-snap-align: center;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .filter-item:active {
+            transform: scale(0.92);
+        }
+
+        .filter-item.active {
+            border-color: #fff;
+            box-shadow: 0 0 20px rgba(255,255,255,0.3);
+            background: rgba(255,255,255,0.2);
+        }
+
+        .filter-item .filter-icon {
+            font-size: 26px;
+            line-height: 1;
+        }
+
+        .filter-item .filter-label {
+            font-size: 8px;
+            color: #fff;
+            margin-top: 2px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        /* Bottom Controls */
+        .bottom-controls {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 20px 30px calc(var(--safe-bottom) + 16px);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 10;
+            background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%);
+        }
+
+        .bottom-btn {
+            width: 50px;
+            height: 50px;
+            border: none;
+            background: rgba(255,255,255,0.15);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .bottom-btn:active {
+            transform: scale(0.9);
+            background: rgba(255,255,255,0.3);
+        }
+
+        .bottom-btn svg {
+            width: 24px;
+            height: 24px;
+            fill: none;
+            stroke: #fff;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        /* Shutter Button */
+        .shutter-container {
+            position: relative;
+        }
+
+        .shutter-btn {
+            width: 76px;
+            height: 76px;
+            border-radius: 50%;
+            border: 4px solid #fff;
+            background: transparent;
+            cursor: pointer;
+            position: relative;
+            transition: all 0.2s ease;
+            padding: 0;
+        }
+
+        .shutter-btn:active {
+            transform: scale(0.92);
+        }
+
+        .shutter-inner {
+            width: 100%;
+            height: 100%;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.9);
+            transition: all 0.15s ease;
+        }
+
+        .shutter-btn:active .shutter-inner {
+            transform: scale(0.85);
+            background: #fff;
+        }
+
+        .shutter-btn.recording {
+            border-color: #ef4444;
+        }
+
+        .shutter-btn.recording .shutter-inner {
+            background: #ef4444;
+            border-radius: 8px;
+            width: 32px;
+            height: 32px;
+            margin: auto;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
+        /* Recording ring animation */
+        .record-ring {
+            position: absolute;
+            top: -6px;
+            left: -6px;
+            width: 88px;
+            height: 88px;
+            border-radius: 50%;
+            border: 3px solid transparent;
+            border-top-color: #ef4444;
+            animation: spin 1s linear infinite;
+            display: none;
+        }
+
+        .shutter-btn.recording + .record-ring {
+            display: block;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Mode tabs */
+        .mode-tabs {
+            position: absolute;
+            bottom: 125px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 20px;
+            z-index: 10;
+        }
+
+        .mode-tab {
+            font-size: 13px;
+            font-weight: 600;
+            color: rgba(255,255,255,0.5);
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 4px 0;
+            transition: all 0.3s ease;
+            position: relative;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .mode-tab.active {
+            color: #fff;
+        }
+
+        .mode-tab.active::after {
+            content: '';
+            position: absolute;
+            bottom: -2px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 5px;
+            height: 5px;
+            background: #fff;
+            border-radius: 50%;
+        }
+
+        /* Face mesh overlay */
+        .face-mesh-point {
+            position: absolute;
+            width: 4px;
+            height: 4px;
+            background: rgba(100, 200, 255, 0.6);
+            border-radius: 50%;
+            pointer-events: none;
+        }
+
+        /* AR Object Container */
+        .ar-object {
+            position: absolute;
+            pointer-events: none;
+            z-index: 4;
+            transition: all 0.1s ease;
+        }
+
+        /* Scan lines effect */
+        .scan-lines {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 3;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .scan-lines.active {
+            opacity: 1;
+        }
+
+        .scan-line {
+            position: absolute;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(100,200,255,0.4), transparent);
+            animation: scanMove 3s linear infinite;
+        }
+
+        @keyframes scanMove {
+            0% { top: -2px; }
+            100% { top: 100%; }
+        }
+
+        /* Corner brackets for face detection */
+        .face-bracket {
+            position: absolute;
+            z-index: 5;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+
+        .face-bracket.visible {
+            opacity: 1;
+        }
+
+        .face-bracket-corner {
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            border-color: rgba(100, 220, 255, 0.8);
+            border-style: solid;
+            border-width: 0;
+        }
+
+        .face-bracket-corner.tl { top: 0; left: 0; border-top-width: 3px; border-left-width: 3px; border-radius: 4px 0 0 0; }
+        .face-bracket-corner.tr { top: 0; right: 0; border-top-width: 3px; border-right-width: 3px; border-radius: 0 4px 0 0; }
+        .face-bracket-corner.bl { bottom: 0; left: 0; border-bottom-width: 3px; border-left-width: 3px; border-radius: 0 0 0 4px; }
+        .face-bracket-corner.br { bottom: 0; right: 0; border-bottom-width: 3px; border-right-width: 3px; border-radius: 0 0 4px 0; }
+
+        /* Side Panel */
+        .side-panel {
+            position: absolute;
+            right: 12px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            z-index: 10;
+        }
+
+        .side-btn {
+            width: 44px;
+            height: 44px;
+            border: none;
+            background: rgba(255,255,255,0.12);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border-radius: 14px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            color: #fff;
+            gap: 2px;
+        }
+
+        .side-btn:active {
+            transform: scale(0.9);
+            background: rgba(255,255,255,0.3);
+        }
+
+        .side-btn.active {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .side-btn svg {
+            width: 20px;
+            height: 20px;
+            fill: none;
+            stroke: #fff;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .side-btn-label {
+            font-size: 7px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.3px;
+        }
+
+        /* Toast notification */
+        .toast {
+            position: absolute;
+            top: 100px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-20px);
+            background: rgba(0,0,0,0.7);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 500;
+            z-index: 100;
+            opacity: 0;
+            transition: all 0.3s ease;
+            pointer-events: none;
+            white-space: nowrap;
+        }
+
+        .toast.show {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+
+        /* Flash effect */
+        .flash-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: #fff;
+            z-index: 50;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.1s ease;
+        }
+
+        .flash-overlay.flash {
+            opacity: 1;
+        }
+
+        /* Permission screen */
+        .permission-screen {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 200;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #0f0f23 100%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .permission-screen.hidden {
+            display: none;
+        }
+
+        .permission-icon {
+            width: 100px;
+            height: 100px;
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            border-radius: 30px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 30px;
+            box-shadow: 0 20px 60px rgba(99, 102, 241, 0.3);
+        }
+
+        .permission-icon svg {
+            width: 50px;
+            height: 50px;
+            fill: none;
+            stroke: #fff;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .permission-screen h2 {
+            color: #fff;
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 12px;
+        }
+
+        .permission-screen p {
+            color: rgba(255,255,255,0.6);
+            font-size: 15px;
+            line-height: 1.5;
+            margin-bottom: 40px;
+        }
+
+        .permission-btn {
+            background: linear-gradient(135deg, #6366f1, #a855f7);
+            color: #fff;
+            border: none;
+            padding: 16px 48px;
+            border-radius: 16px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            box-shadow: 0 10px 40px rgba(99, 102, 241, 0.4);
+        }
+
+        .permission-btn:active {
+            transform: scale(0.95);
+        }
+
+        /* Timer display */
+        .timer-display {
+            position: absolute;
+            top: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            display: none;
+            align-items: center;
+            gap: 8px;
+            background: rgba(239, 68, 68, 0.8);
+            padding: 6px 14px;
+            border-radius: 8px;
+        }
+
+        .timer-display.visible {
+            display: flex;
+        }
+
+        .timer-dot {
+            width: 8px;
+            height: 8px;
+            background: #fff;
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+
+        .timer-text {
+            color: #fff;
+            font-size: 14px;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Intensity slider */
+        .intensity-slider {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: 250px;
+            z-index: 10;
+            display: none;
+            align-items: center;
+            gap: 12px;
+            background: rgba(0,0,0,0.4);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 10px 20px;
+            border-radius: 24px;
+        }
+
+        .intensity-slider.visible {
+            display: flex;
+        }
+
+        .intensity-slider input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 160px;
+            height: 4px;
+            background: rgba(255,255,255,0.3);
+            border-radius: 2px;
+            outline: none;
+        }
+
+        .intensity-slider input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 22px;
+            height: 22px;
+            background: #fff;
+            border-radius: 50%;
+            cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+        }
+
+        .intensity-label {
+            color: #fff;
+            font-size: 12px;
+            font-weight: 600;
+            min-width: 30px;
+            text-align: center;
+        }
+
+        /* Grid overlay */
+        .grid-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 3;
+            pointer-events: none;
+            display: none;
+        }
+
+        .grid-overlay.visible {
+            display: block;
+        }
+
+        .grid-overlay .grid-line {
+            position: absolute;
+            background: rgba(255,255,255,0.15);
+        }
+
+        .grid-overlay .grid-line.h1 { top: 33.33%; left: 0; right: 0; height: 1px; }
+        .grid-overlay .grid-line.h2 { top: 66.66%; left: 0; right: 0; height: 1px; }
+        .grid-overlay .grid-line.v1 { left: 33.33%; top: 0; bottom: 0; width: 1px; }
+        .grid-overlay .grid-line.v2 { left: 66.66%; top: 0; bottom: 0; width: 1px; }
+
+        /* Effects overlay */
+        .beauty-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 2;
+            pointer-events: none;
+            mix-blend-mode: soft-light;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        /* Thumbnail preview */
+        .thumbnail-preview {
+            width: 50px;
+            height: 50px;
+            border-radius: 12px;
+            border: 2px solid rgba(255,255,255,0.5);
+            overflow: hidden;
+            background: rgba(255,255,255,0.1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .thumbnail-preview img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .thumbnail-preview svg {
+            width: 24px;
+            height: 24px;
+            fill: none;
+            stroke: rgba(255,255,255,0.5);
+            stroke-width: 2;
+        }
+
+        /* FPS counter */
+        .fps-counter {
+            position: absolute;
+            top: 70px;
+            right: 16px;
+            z-index: 10;
+            color: rgba(255,255,255,0.5);
+            font-size: 11px;
+            font-weight: 600;
+            font-variant-numeric: tabular-nums;
+            display: none;
+        }
+
+        .fps-counter.visible {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <!-- Permission Screen -->
+    <div class="permission-screen" id="permissionScreen">
+        <div class="permission-icon">
+            <svg viewBox="0 0 24 24">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                <circle cx="12" cy="13" r="4"/>
+            </svg>
+        </div>
+        <h2>Enable AR Camera</h2>
+        <p>Allow camera access to use AR filters, face tracking, and capture photos & videos.</p>
+        <button class="permission-btn" id="enableCameraBtn">Enable Camera</button>
+    </div>
+
+    <!-- Camera Feed -->
+    <video id="cameraFeed" autoplay playsinline muted></video>
+
+    <!-- AR Canvas -->
+    <canvas id="arCanvas"></canvas>
+
+    <!-- Face Overlay -->
+    <canvas id="faceOverlay"></canvas>
+
+    <!-- Grid Overlay -->
+    <div class="grid-overlay" id="gridOverlay">
+        <div class="grid-line h1"></div>
+        <div class="grid-line h2"></div>
+        <div class="grid-line v1"></div>
+        <div class="grid-line v2"></div>
+    </div>
+
+    <!-- Scan Lines Effect -->
+    <div class="scan-lines" id="scanLines">
+        <div class="scan-line"></div>
+    </div>
+
+    <!-- Face Detection Bracket -->
+    <div class="face-bracket" id="faceBracket">
+        <div class="face-bracket-corner tl"></div>
+        <div class="face-bracket-corner tr"></div>
+        <div class="face-bracket-corner bl"></div>
+        <div class="face-bracket-corner br"></div>
+    </div>
+
+    <!-- Flash Effect -->
+    <div class="flash-overlay" id="flashOverlay"></div>
+
+    <!-- Top Bar -->
+    <div class="top-bar">
+        <button class="top-bar-btn" id="closeBtn" aria-label="Close">
+            <svg viewBox="0 0 24 24">
+                <line x1="18" y1="6" x2="6" y2="18"/>
+                <line x1="6" y1="6" x2="18" y2="18"/>
+            </svg>
+        </button>
+
+        <div class="top-bar-center">
+            <span class="ar-badge">AR</span>
+            <div class="tracking-status" id="trackingStatus">
+                <div class="tracking-dot" id="trackingDot"></div>
+                <span id="trackingLabel">Tracking</span>
+            </div>
+        </div>
+
+        <button class="top-bar-btn" id="flipCameraBtn" aria-label="Flip Camera">
+            <svg viewBox="0 0 24 24">
+                <path d="M21 2v6h-6"/>
+                <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+                <path d="M3 22v-6h6"/>
+                <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Timer Display -->
+    <div class="timer-display" id="timerDisplay">
+        <div class="timer-dot"></div>
+        <span class="timer-text" id="timerText">00:00</span>
+    </div>
+
+    <!-- FPS Counter -->
+    <div class="fps-counter" id="fpsCounter">60 FPS</div>
+
+    <!-- Side Panel -->
+    <div class="side-panel">
+        <button class="side-btn" id="flashBtn" aria-label="Flash">
+            <svg viewBox="0 0 24 24">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+            <span class="side-btn-label">Flash</span>
+        </button>
+        <button class="side-btn" id="timerBtn" aria-label="Timer">
+            <svg viewBox="0 0 24 24">
+                <circle cx="12" cy="13" r="8"/>
+                <path d="M12 9v4l2 2"/>
+                <path d="M9 1h6"/>
+                <path d="M12 1v3"/>
+            </svg>
+            <span class="side-btn-label">Timer</span>
+        </button>
+        <button class="side-btn" id="gridBtn" aria-label="Grid">
+            <svg viewBox="0 0 24 24">
+                <rect x="3" y="3" width="18" height="18" rx="2"/>
+                <line x1="3" y1="9" x2="21" y2="9"/>
+                <line x1="3" y1="15" x2="21" y2="15"/>
+                <line x1="9" y1="3" x2="9" y2="21"/>
+                <line x1="15" y1="3" x2="15" y2="21"/>
+            </svg>
+            <span class="side-btn-label">Grid</span>
+        </button>
+        <button class="side-btn" id="beautyBtn" aria-label="Beauty">
+            <svg viewBox="0 0 24 24">
+                <path d="M12 3c.132 0 .263 0 .393 0a7.5 7.5 0 0 0 7.92 12.446A9 9 0 1 1 12 3z"/>
+            </svg>
+            <span class="side-btn-label">Beauty</span>
+        </button>
+        <button class="side-btn" id="fpsBtn" aria-label="FPS">
+            <svg viewBox="0 0 24 24">
+                <path d="M12 20v-6M6 20V10M18 20V4"/>
+            </svg>
+            <span class="side-btn-label">FPS</span>
+        </button>
+    </div>
+
+    <!-- Intensity Slider -->
+    <div class="intensity-slider" id="intensitySlider">
+        <span class="intensity-label">0</span>
+        <input type="range" id="intensityRange" min="0" max="100" value="50">
+        <span class="intensity-label" id="intensityValue">50</span>
+    </div>
+
+    <!-- Filters Carousel -->
+    <div class="filters-bar">
+        <div class="filters-scroll" id="filtersScroll">
+            <div class="filter-item active" data-filter="none">
+                <span class="filter-icon">⊘</span>
+                <span class="filter-label">None</span>
+            </div>
+            <div class="filter-item" data-filter="dog">
+                <span class="filter-icon">🐶</span>
+                <span class="filter-label">Puppy</span>
+            </div>
+            <div class="filter-item" data-filter="cat">
+                <span class="filter-icon">🐱</span>
+                <span class="filter-label">Kitty</span>
+            </div>
+            <div class="filter-item" data-filter="crown">
+                <span class="filter-icon">👑</span>
+                <span class="filter-label">Crown</span>
+            </div>
+            <div class="filter-item" data-filter="glasses">
+                <span class="filter-icon">🕶️</span>
+                <span class="filter-label">Shades</span>
+            </div>
+            <div class="filter-item" data-filter="hearts">
+                <span class="filter-icon">💕</span>
+                <span class="filter-label">Hearts</span>
+            </div>
+            <div class="filter-item" data-filter="fire">
+                <span class="filter-icon">🔥</span>
+                <span class="filter-label">Fire</span>
+            </div>
+            <div class="filter-item" data-filter="sparkle">
+                <span class="filter-icon">✨</span>
+                <span class="filter-label">Sparkle</span>
+            </div>
+            <div class="filter-item" data-filter="neon">
+                <span class="filter-icon">💜</span>
+                <span class="filter-label">Neon</span>
+            </div>
+            <div class="filter-item" data-filter="pixel">
+                <span class="filter-icon">👾</span>
+                <span class="filter-label">Pixel</span>
+            </div>
+            <div class="filter-item" data-filter="rainbow">
+                <span class="filter-icon">🌈</span>
+                <span class="filter-label">Rainbow</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mode Tabs -->
+    <div class="mode-tabs">
+        <button class="mode-tab" data-mode="video">Video</button>
+        <button class="mode-tab active" data-mode="photo">Photo</button>
+        <button class="mode-tab" data-mode="boomerang">Boom</button>
+        <button class="mode-tab" data-mode="effects">Effects</button>
+    </div>
+
+    <!-- Bottom Controls -->
+    <div class="bottom-controls">
+        <div class="thumbnail-preview" id="thumbnailPreview">
+            <svg viewBox="0 0 24 24">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+                <circle cx="8.5" cy="8.5" r="1.5"/>
+                <polyline points="21 15 16 10 5 21"/>
+            </svg>
+        </div>
+
+        <div class="shutter-container">
+            <button class="shutter-btn" id="shutterBtn" aria-label="Capture">
+                <div class="shutter-inner" id="shutterInner"></div>
+            </button>
+            <div class="record-ring"></div>
+        </div>
+
+        <button class="bottom-btn" id="switchBtn" aria-label="Switch Camera">
+            <svg viewBox="0 0 24 24">
+                <path d="M21 2v6h-6"/>
+                <path d="M3 12a9 9 0 0 1 15-6.7L21 8"/>
+                <path d="M3 22v-6h6"/>
+                <path d="M21 12a9 9 0 0 1-15 6.7L3 16"/>
+            </svg>
+        </button>
+    </div>
+
+    <!-- Toast -->
+    <div class="toast" id="toast"></div>
+
+    <script>
+        // ==========================================
+        //  AR MOBILE CAMERA APP
+        // ==========================================
+
+        const app = {
+            stream: null,
+            currentCamera: 'user',
+            currentFilter: 'none',
+            currentMode: 'photo',
+            isRecording: false,
+            recordingTime: 0,
+            recordingInterval: null,
+            flashMode: 'off',
+            timerMode: 0,
+            gridVisible: false,
+            beautyMode: false,
+            showFPS: false,
+            filterIntensity: 50,
+            faceDetected: false,
+            arParticles: [],
+            lastFrameTime: 0,
+            fps: 0,
+            frameCount: 0,
+            fpsUpdateTime: 0,
+            capturedPhotos: [],
+            arCanvas: null,
+            arCtx: null,
+            faceCanvas: null,
+            faceCtx: null,
+            animationId: null,
+            faceBounds: null,
+        };
+
+        // DOM Elements
+        const els = {
+            permissionScreen: document.getElementById('permissionScreen'),
+            enableCameraBtn: document.getElementById('enableCameraBtn'),
+            cameraFeed: document.getElementById('cameraFeed'),
+            arCanvas: document.getElementById('arCanvas'),
+            faceOverlay: document.getElementById('faceOverlay'),
+            gridOverlay: document.getElementById('gridOverlay'),
+            scanLines: document.getElementById('scanLines'),
+            faceBracket: document.getElementById('faceBracket'),
+            flashOverlay: document.getElementById('flashOverlay'),
+            trackingDot: document.getElementById('trackingDot'),
+            trackingLabel: document.getElementById('trackingLabel'),
+            timerDisplay: document.getElementById('timerDisplay'),
+            timerText: document.getElementById('timerText'),
+            fpsCounter: document.getElementById('fpsCounter'),
+            intensitySlider: document.getElementById('intensitySlider'),
+            intensityRange: document.getElementById('intensityRange'),
+            intensityValue: document.getElementById('intensityValue'),
+            filtersScroll: document.getElementById('filtersScroll'),
+            shutterBtn: document.getElementById('shutterBtn'),
+            shutterInner: document.getElementById('shutterInner'),
+            toast: document.getElementById('toast'),
+            thumbnailPreview: document.getElementById('thumbnailPreview'),
+        };
+
+        // Initialize
+        function init() {
+            setupCanvas();
+            bindEvents();
+            checkCameraSupport();
+        }
+
+        function setupCanvas() {
+            app.arCanvas = els.arCanvas;
+            app.arCtx = app.arCanvas.getContext('2d');
+            app.faceCanvas = els.faceOverlay;
+            app.faceCtx = app.faceCanvas.getContext('2d');
+            resizeCanvases();
+            window.addEventListener('resize', resizeCanvases);
+        }
+
+        function resizeCanvases() {
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            app.arCanvas.width = w;
+            app.arCanvas.height = h;
+            app.faceCanvas.width = w;
+            app.faceCanvas.height = h;
+        }
+
+        function checkCameraSupport() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                showToast('Camera not supported on this device');
+            }
+        }
+
+        // Events
+        function bindEvents() {
+            els.enableCameraBtn.addEventListener('click', startCamera);
+
+            document.getElementById('closeBtn').addEventListener('click', () => {
+                showToast('Close button pressed');
+            });
+
+            document.getElementById('flipCameraBtn').addEventListener('click', flipCamera);
+            document.getElementById('switchBtn').addEventListener('click', flipCamera);
+
+            // Filter selection
+            document.querySelectorAll('.filter-item').forEach(item => {
+                item.addEventListener('click', () => selectFilter(item));
+            });
+
+            // Mode tabs
+            document.querySelectorAll('.mode-tab').forEach(tab => {
+                tab.addEventListener('click', () => selectMode(tab));
+            });
+
+            // Shutter
+            els.shutterBtn.addEventListener('click', handleShutter);
+
+            // Long press for video in photo mode
+            let pressTimer;
+            els.shutterBtn.addEventListener('touchstart', (e) => {
+                pressTimer = setTimeout(() => {
+                    if (app.currentMode === 'photo') {
+                        startRecording();
+                    }
+                }, 500);
+            }, { passive: true });
+
+            els.shutterBtn.addEventListener('touchend', () => {
+                clearTimeout(pressTimer);
+                if (app.isRecording && app.currentMode === 'photo') {
+                    stopRecording();
+                }
+            });
+
+            // Side buttons
+            document.getElementById('flashBtn').addEventListener('click', toggleFlash);
+            document.getElementById('timerBtn').addEventListener('click', toggleTimer);
+            document.getElementById('gridBtn').addEventListener('click', toggleGrid);
+            document.getElementById('beautyBtn').addEventListener('click', toggleBeauty);
+            document.getElementById('fpsBtn').addEventListener('click', toggleFPS);
+
+            // Intensity slider
+            els.intensityRange.addEventListener('input', (e) => {
+                app.filterIntensity = parseInt(e.target.value);
+                els.intensityValue.textContent = app.filterIntensity;
+            });
+        }
+
+        // Camera
+        async function startCamera() {
+            try {
+                const constraints = {
+                    video: {
+                        facingMode: app.currentCamera,
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 },
+                        frameRate: { ideal: 60 }
+                    },
+                    audio: false
+                };
+
+                app.stream = await navigator.mediaDevices.getUserMedia(constraints);
+                els.cameraFeed.srcObject = app.stream;
+                els.permissionScreen.classList.add('hidden');
+                showToast('Camera active');
+
+                // Start AR rendering loop
+                requestAnimationFrame(renderLoop);
+
+                // Simulate face detection after a short delay
+                setTimeout(() => {
+                    simulateFaceDetection();
+                }, 1500);
+
+            } catch (err) {
+                console.error('Camera error:', err);
+                showToast('Camera access denied');
+            }
+        }
+
+        async function flipCamera() {
+            app.currentCamera = app.currentCamera === 'user' ? 'environment' : 'user';
+            els.cameraFeed.style.transform = app.currentCamera === 'user' ? 'scaleX(-1)' : 'scaleX(1)';
+
+            if (app.stream) {
+                app.stream.getTracks().forEach(track => track.stop());
+            }
+
+            try {
+                const constraints = {
+                    video: {
+                        facingMode: app.currentCamera,
+                        width: { ideal: 1920 },
+                        height: { ideal: 1080 }
+                    },
+                    audio: false
+                };
+                app.stream = await navigator.mediaDevices.getUserMedia(constraints);
+                els.cameraFeed.srcObject = app.stream;
+                showToast(app.currentCamera === 'user' ? 'Front Camera' : 'Rear Camera');
+            } catch (err) {
+                showToast('Failed to switch camera');
+            }
+        }
+
+        // Filters
+        function selectFilter(item) {
+            document.querySelectorAll('.filter-item').forEach(f => f.classList.remove('active'));
+            item.classList.add('active');
+            app.currentFilter = item.dataset.filter;
+
+            if (app.currentFilter !== 'none') {
+                els.intensitySlider.classList.add('visible');
+                els.scanLines.classList.add('active');
+                setTimeout(() => els.scanLines.classList.remove('active'), 1500);
+            } else {
+                els.intensitySlider.classList.remove('visible');
+            }
+
+            showToast(`Filter: ${item.querySelector('.filter-label').textContent}`);
+        }
+
+        // Modes
+        function selectMode(tab) {
+            document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+            tab.classList.add('active');
+            app.currentMode = tab.dataset.mode;
+
+            if (app.currentMode === 'video') {
+                els.shutterInner.style.background = 'rgba(239, 68, 68, 0.9)';
+            } else {
+                els.shutterInner.style.background = 'rgba(255,255,255,0.9)';
+            }
+
+            showToast(`Mode: ${tab.textContent}`);
+        }
+
+        // Shutter
+        function handleShutter() {
+            if (app.currentMode === 'video') {
+                if (app.isRecording) {
+                    stopRecording();
+                } else {
+                    startRecording();
+                }
+            } else if (app.currentMode === 'photo') {
+                if (app.timerMode > 0) {
+                    startTimerCapture();
+                } else {
+                    capturePhoto();
+                }
+            } else if (app.currentMode === 'boomerang') {
+                captureBoomerang();
+            } else {
+                capturePhoto();
+            }
+        }
+
+        function capturePhoto() {
+            // Flash effect
+            els.flashOverlay.classList.add('flash');
+            setTimeout(() => els.flashOverlay.classList.remove('flash'), 150);
+
+            // Create snapshot
+            const canvas = document.createElement('canvas');
+            canvas.width = els.cameraFeed.videoWidth || 640;
+            canvas.height = els.cameraFeed.videoHeight || 480;
+            const ctx = canvas.getContext('2d');
+
+            if (app.currentCamera === 'user') {
+                ctx.translate(canvas.width, 0);
+                ctx.scale(-1, 1);
+            }
+            ctx.drawImage(els.cameraFeed, 0, 0);
+
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+            app.capturedPhotos.push(dataUrl);
+
+            // Update thumbnail
+            els.thumbnailPreview.innerHTML = `<img src="${dataUrl}" alt="Last capture">`;
+
+            showToast('📸 Photo captured!');
+
+            // Haptic feedback
+            if (navigator.vibrate) navigator.vibrate(50);
+        }
+
+        function startRecording() {
+            app.isRecording = true;
+            app.recordingTime = 0;
+            els.shutterBtn.classList.add('recording');
+            els.timerDisplay.classList.add('visible');
+
+            app.recordingInterval = setInterval(() => {
+                app.recordingTime++;
+                const mins = Math.floor(app.recordingTime / 60).toString().padStart(2, '0');
+                const secs = (app.recordingTime % 60).toString().padStart(2, '0');
+                els.timerText.textContent = `${mins}:${secs}`;
+            }, 1000);
+
+            if (navigator.vibrate) navigator.vibrate(100);
+            showToast('🔴 Recording started');
+        }
+
+        function stopRecording() {
+            app.isRecording = false;
+            els.shutterBtn.classList.remove('recording');
+            els.timerDisplay.classList.remove('visible');
+            clearInterval(app.recordingInterval);
+
+            if (navigator.vibrate) navigator.vibrate([50, 50, 50]);
+            showToast(`📹 Video saved (${els.timerText.textContent})`);
+        }
+
+        function startTimerCapture() {
+            let count = app.timerMode;
+            showToast(`Timer: ${count}s`);
+
+            const countdown = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    showToast(`${count}`);
+                } else {
+                    clearInterval(countdown);
+                    capturePhoto();
+                }
+            }, 1000);
+        }
+
+        function captureBoomerang() {
+            showToast('🔄 Capturing Boomerang...');
+            els.flashOverlay.classList.add('flash');
+            setTimeout(() => els.flashOverlay.classList.remove('flash'), 100);
+
+            let boomCount = 0;
+            const boomInterval = setInterval(() => {
+                boomCount++;
+                els.flashOverlay.classList.add('flash');
+                setTimeout(() => els.flashOverlay.classList.remove('flash'), 50);
+                if (boomCount >= 5) {
+                    clearInterval(boomInterval);
+                    showToast('🔄 Boomerang saved!');
+                }
+            }, 200);
+        }
+
+        // Side panel controls
+        function toggleFlash() {
+            const modes = ['off', 'on', 'auto'];
+            const currentIndex = modes.indexOf(app.flashMode);
+            app.flashMode = modes[(currentIndex + 1) % modes.length];
+
+            const btn = document.getElementById('flashBtn');
+            btn.classList.toggle('active', app.flashMode !== 'off');
+
+            showToast(`Flash: ${app.flashMode.charAt(0).toUpperCase() + app.flashMode.slice(1)}`);
+        }
+
+        function toggleTimer() {
+            const modes = [0, 3, 5, 10];
+            const currentIndex = modes.indexOf(app.timerMode);
+            app.timerMode = modes[(currentIndex + 1) % modes.length];
+
+            const btn = document.getElementById('timerBtn');
+            btn.classList.toggle('active', app.timerMode > 0);
+
+            showToast(app.timerMode > 0 ? `Timer: ${app.timerMode}s` : 'Timer: Off');
+        }
+
+        function toggleGrid() {
+            app.gridVisible = !app.gridVisible;
+            els.gridOverlay.classList.toggle('visible', app.gridVisible);
+            document.getElementById('gridBtn').classList.toggle('active', app.gridVisible);
+            showToast(app.gridVisible ? 'Grid: On' : 'Grid: Off');
+        }
+
+        function toggleBeauty() {
+            app.beautyMode = !app.beautyMode;
+            document.getElementById('beautyBtn').classList.toggle('active', app.beautyMode);
+
+            if (app.beautyMode) {
+                els.cameraFeed.style.filter = 'brightness(1.05) contrast(0.95) saturate(1.1) blur(0.3px)';
+                els.intensitySlider.classList.add('visible');
+            } else {
+                els.cameraFeed.style.filter = 'none';
+                if (app.currentFilter === 'none') {
+                    els.intensitySlider.classList.remove('visible');
+                }
+            }
+
+            showToast(app.beautyMode ? '✨ Beauty Mode: On' : 'Beauty Mode: Off');
+        }
+
+        function toggleFPS() {
+            app.showFPS = !app.showFPS;
+            els.fpsCounter.classList.toggle('visible', app.showFPS);
+            document.getElementById('fpsBtn').classList.toggle('active', app.showFPS);
+        }
+
+        // Face Detection Simulation
+        function simulateFaceDetection() {
+            app.faceDetected = true;
+            els.trackingDot.classList.remove('lost');
+            els.trackingLabel.textContent = 'Face Tracked';
+
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+
+            // Simulate face position (center of screen area)
+            app.faceBounds = {
+                x: w * 0.3,
+                y: h * 0.2,
+                width: w * 0.4,
+                height: h * 0.35
+            };
+
+            // Show face bracket
+            const bracket = els.faceBracket;
+            bracket.style.left = app.faceBounds.x + 'px';
+            bracket.style.top = app.faceBounds.y + 'px';
+            bracket.style.width = app.faceBounds.width + 'px';
+            bracket.style.height = app.faceBounds.height + 'px';
+            bracket.classList.add('visible');
+
+            // Simulate slight movement
+            animateFaceBounds();
+        }
+
+        function animateFaceBounds() {
+            if (!app.faceDetected) return;
+
+            const w = window.innerWidth;
+            const h = window.innerHeight;
+            const t = Date.now() / 1000;
+
+            const offsetX = Math.sin(t * 0.5) * 10;
+            const offsetY = Math.cos(t * 0.7) * 8;
+
+            app.faceBounds.x = w * 0.3 + offsetX;
+            app.faceBounds.y = h * 0.2 + offsetY;
+
+            const bracket = els.faceBracket;
+            bracket.style.left = app.faceBounds.x + 'px';
+            bracket.style.top = app.faceBounds.y + 'px';
+
+            requestAnimationFrame(animateFaceBounds);
+        }
+
+        // AR Render Loop
+        function renderLoop(timestamp) {
+            // FPS calculation
+            app.frameCount++;
+            if (timestamp - app.fpsUpdateTime >= 1000) {
+                app.fps = app.frameCount;
+                app.frameCount = 0;
+                app.fpsUpdateTime = timestamp;
+                if (app.showFPS) {
+                    els.fpsCounter.textContent = `${app.fps} FPS`;
+                }
+            }
+
+            // Clear canvases
+            app.arCtx.clearRect(0, 0, app.arCanvas.width, app.arCanvas.height);
+
+            // Render current filter
+            if (app.currentFilter !== 'none' && app.faceDetected) {
+                renderFilter(timestamp);
+            }
+
+            // Render particles
+            renderParticles(timestamp);
+
+            app.animationId = requestAnimationFrame(renderLoop);
+        }
+
+        function renderFilter(timestamp) {
+            const ctx = app.arCtx;
+            const fb = app.faceBounds;
+            if (!fb) return;
+
+            const intensity = app.filterIntensity / 100;
+            const t = timestamp / 1000;
+
+            ctx.globalAlpha = intensity;
+
+            switch (app.currentFilter) {
+                case 'dog':
+                    drawDogFilter(ctx, fb, t);
+                    break;
+                case 'cat':
+                    drawCatFilter(ctx, fb, t);
+                    break;
+                case 'crown':
+                    drawCrownFilter(ctx, fb, t);
+                    break;
+                case 'glasses':
+                    drawGlassesFilter(ctx, fb, t);
+                    break;
+                case 'hearts':
+                    drawHeartsFilter(ctx, fb, t);
+                    break;
+                case 'fire':
+                    drawFireFilter(ctx, fb, t);
+                    break;
+                case 'sparkle':
+                    drawSparkleFilter(ctx, fb, t);
+                    break;
+                case 'neon':
+                    drawNeonFilter(ctx, fb, t);
+                    break;
+                case 'pixel':
+                    drawPixelFilter(ctx, fb, t);
+                    break;
+                case 'rainbow':
+                    drawRainbowFilter(ctx, fb, t);
+                    break;
+            }
+
+            ctx.globalAlpha = 1;
+        }
+
+        // Filter Drawing Functions
+        function drawDogFilter(ctx, fb, t) {
+            const centerX = fb.x + fb.width / 2;
+            const centerY = fb.y + fb.height / 2;
+            const size = fb.width * 0.3;
+
+            // Ears
+            ctx.font = `${size}px serif`;
+            ctx.textAlign = 'center';
+            const earBounce = Math.sin(t * 3) * 5;
+            ctx.fillText('🐕', centerX - fb.width * 0.3, fb.y - 10 + earBounce);
+            ctx.fillText('🐕', centerX + fb.width * 0.3, fb.y - 10 - earBounce);
+
+            // Nose
+            ctx.font = `${size * 0.8}px serif`;
+            ctx.fillText('🐽', centerX, centerY + fb.height * 0.25);
+
+            // Tongue
+            const tongueY = Math.sin(t * 2) * 3;
+            ctx.font = `${size * 0.5}px serif`;
+            ctx.fillText('👅', centerX, fb.y + fb.height + tongueY);
+        }
+
+        function drawCatFilter(ctx, fb, t) {
+            const centerX = fb.x + fb.width / 2;
+            const size = fb.width * 0.2;
+
+            // Cat ears (triangles)
+            ctx.fillStyle = 'rgba(200, 150, 120, 0.8)';
+
+            // Left ear
+            ctx.beginPath();
+            ctx.moveTo(fb.x + fb.width * 0.15, fb.y + 5);
+            ctx.lineTo(fb.x + fb.width * 0.05, fb.y - fb.height * 0.3);
+            ctx.lineTo(fb.x + fb.width * 0.35, fb.y + 5);
+            ctx.fill();
+
+            // Right ear
+            ctx.beginPath();
+            ctx.moveTo(fb.x + fb.width * 0.65, fb.y + 5);
+            ctx.lineTo(fb.x + fb.width * 0.95, fb.y - fb.height * 0.3);
+            ctx.lineTo(fb.x + fb.width * 0.85, fb.y + 5);
+            ctx.fill();
+
+            // Inner ears
+            ctx.fillStyle = 'rgba(255, 180, 200, 0.7)';
+            ctx.beginPath();
+            ctx.moveTo(fb.x + fb.width * 0.17, fb.y + 3);
+            ctx.lineTo(fb.x + fb.width * 0.1, fb.y - fb.height * 0.2);
+            ctx.lineTo(fb.x + fb.width * 0.3, fb.y + 3);
+            ctx.fill();
+
+            ctx.beginPath();
+            ctx.moveTo(fb.x + fb.width * 0.7, fb.y + 3);
+            ctx.lineTo(fb.x + fb.width * 0.9, fb.y - fb.height * 0.2);
+            ctx.lineTo(fb.x + fb.width * 0.83, fb.y + 3);
+            ctx.fill();
+
+            // Whiskers
+            ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+            ctx.lineWidth = 2;
+            const whiskerY = fb.y + fb.height * 0.6;
+
+            for (let i = 0; i < 3; i++) {
+                const angle = (i - 1) * 0.15 + Math.sin(t * 2) * 0.05;
+                // Left
+                ctx.beginPath();
+                ctx.moveTo(centerX - fb.width * 0.1, whiskerY + i * 8);
+                ctx.lineTo(centerX - fb.width * 0.55, whiskerY + i * 8 - 15 + Math.sin(angle) * 10);
+                ctx.stroke();
+                // Right
+                ctx.beginPath();
+                ctx.moveTo(centerX + fb.width * 0.1, whiskerY + i * 8);
+                ctx.lineTo(centerX + fb.width * 0.55, whiskerY + i * 8 - 15 + Math.sin(angle) * 10);
+                ctx.stroke();
+            }
+
+            // Nose
+            ctx.font = `${size}px serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('🐱', centerX, fb.y + fb.height * 0.7);
+        }
+
+        function drawCrownFilter(ctx, fb, t) {
+            const centerX = fb.x + fb.width / 2;
+            const size = fb.width * 0.5;
+            const float = Math.sin(t * 2) * 5;
+
+            ctx.font = `${size}px serif`;
+            ctx.textAlign = 'center';
+            ctx.fillText('👑', centerX, fb.y - 15 + float);
+
+            // Sparkle particles around crown
+            for (let i = 0; i < 5; i++) {
+                const angle = (t * 2 + i * 1.256);
+                const px = centerX + Math.cos(angle) * (fb.width * 0.4);
+                const py = fb.y - 20 + Math.sin(angle) * 15;
+                const sparkleSize = 8 + Math.sin(t * 5 + i) * 4;
+
+                ctx.fillStyle = `rgba(255, 215, 0, ${0.5 + Math.sin(t * 3 + i) * 0.3})`;
+                drawStar(ctx, px, py, 4, sparkleSize, sparkleSize * 0.4);
+            }
+        }
+
+        function drawGlassesFilter(ctx, fb, t) {
+            const centerX = fb.x + fb.width / 2;
+            const eyeY = fb.y + fb.height * 0.35;
+            const glassWidth = fb.width * 0.25;
+            const glassHeight = fb.height * 0.15;
+            const gap = fb.width * 0.05;
+
+            // Lens gradient
+            const gradient = ctx.createLinearGradient(0, eyeY - glassHeight, 0, eyeY + glassHeight);
+            gradient.addColorStop(0, 'rgba(40, 40, 40, 0.85)');
+            gradient.addColorStop(0.5, 'rgba(60, 60, 80, 0.75)');
+            gradient.addColorStop(1, 'rgba(30, 30, 50, 0.9)');
+
+            // Reflection
+            const shimmer = Math.sin(t * 2) * 0.2 + 0.3;
+
+            // Left lens
+            ctx.fillStyle = gradient;
+            roundRect(ctx, centerX - gap - glassWidth, eyeY - glassHeight / 2, glassWidth, glassHeight, 8);
+            ctx.fill();
+
+            // Right lens
+            roundRect(ctx, centerX + gap, eyeY - glassHeight / 2, glassWidth, glassHeight, 8);
+            ctx.fill();
+
+            // Frames
+            ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+            ctx.lineWidth = 3;
+            roundRect(ctx, centerX - gap - glassWidth, eyeY - glassHeight / 2, glassWidth, glassHeight, 8);
+            ctx.stroke();
+            roundRect(ctx, centerX + gap, eyeY - glassHeight / 2, glassWidth, glassHeight, 8);
+            ctx.stroke();
+
+            // Bridge
+            ctx.beginPath();
+            ctx.moveTo(centerX - gap, eyeY);
+            ctx.lineTo(centerX + gap, eyeY);
+            ctx.stroke();
+
+            // Temples
+            ctx.beginPath();
+            ctx.moveTo(centerX - gap - glassWidth, eyeY);
+            ctx.lineTo(fb.x - 5, eyeY + 5);
+            ctx.stroke();
+
+            ctx.beginPath();
+            ctx.moveTo(centerX + gap + glassWidth, eyeY);
+            ctx.lineTo(fb.x + fb.width + 5, eyeY + 5);
+            ctx.stroke();
+
+            // Lens reflection
+            ctx.fillStyle = `rgba(255, 255, 255, ${shimmer})`;
+            ctx.beginPath();
+            ctx.ellipse(centerX - gap - glassWidth * 0.5, eyeY - glassHeight * 0.15, glassWidth * 0.15, glassHeight * 0.08, -0.3, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawHeartsFilter(ctx, fb, t) {
+            // Floating hearts
+            for (let i = 0; i < 12; i++) {
+                const seed = i * 137.5;
+                const x = fb.x + fb.width * 0.5 + Math.sin(t + seed) * fb.width * 0.8;
+                const y = fb.y - (t * 30 + seed * 2) % (fb.height * 2) + fb.height;
+                const size = 12 + Math.sin(seed) * 8;
+                const alpha = 0.3 + Math.sin(t * 2 + seed) * 0.3;
+
+                ctx.globalAlpha = alpha * (app.filterIntensity / 100);
+                ctx.font = `${size}px serif`;
+                ctx.textAlign = 'center';
+
+                const hearts = ['❤️', '💕', '💖', '💗', '💓'];
+                ctx.fillText(hearts[i % hearts.length], x, y);
+            }
+            ctx.globalAlpha = app.filterIntensity / 100;
+        }
+
+        function drawFireFilter(ctx, fb, t) {
+            const centerX = fb.x + fb.width / 2;
+            const baseY = fb.y + fb.height;
+
+            for (let i = 0; i < 15; i++) {
+                const seed = i * 47;
+                const x = centerX + Math.sin(t * 3 + seed) * fb.width * 0.5;
+                const y = baseY + fb.height * 0.3 - (t * 50 + seed) % (fb.height * 1.5);
+                const size = 14 + Math.sin(seed) * 10;
+                const alpha = Math.max(0, 1 - ((baseY - y) / (fb.height * 1.2)));
+
+                ctx.globalAlpha = alpha * (app.filterIntensity / 100);
+                ctx.font = `${size}px serif`;
+                ctx.textAlign = 'center';
+
+                const fires = ['🔥', '🟠', '🟡', '🟧'];
+                ctx.fillText(fires[i % fires.length], x, y);
+            }
+            ctx.globalAlpha = app.filterIntensity / 100;
+        }
+
+        function drawSparkleFilter(ctx, fb, t) {
+            for (let i = 0; i < 20; i++) {
+                const seed = i * 73;
+                const angle = t * 0.5 + seed;
+                const radius = fb.width * 0.3 + Math.sin(seed * 0.1) * fb.width * 0.4;
+                const x = fb.x + fb.width / 2 + Math.cos(angle) * radius;
+                const y = fb.y + fb.height / 2 + Math.sin(angle) * radius * 0.8;
+                const size = 4 + Math.sin(t * 4 + seed) * 3;
+                const alpha = 0.3 + Math.sin(t * 3 + seed) * 0.4;
+
+                ctx.fillStyle = `rgba(255, 255, 200, ${alpha})`;
+                drawStar(ctx, x, y, 4, size, size * 0.3);
+            }
+        }
+
+        function drawNeonFilter(ctx, fb, t) {
+            const centerX = fb.x + fb.width / 2;
+            const centerY = fb.y + fb.height / 2;
+
+            // Neon glow outline around face
+            ctx.strokeStyle = `hsla(${(t * 50) % 360}, 100%, 60%, 0.6)`;
+            ctx.lineWidth = 3;
+            ctx.shadowColor = `hsla(${(t * 50) % 360}, 100%, 60%, 0.8)`;
+            ctx.shadowBlur = 20;
+
+            // Face outline
+            ctx.beginPath();
+            ctx.ellipse(centerX, centerY, fb.width * 0.45, fb.height * 0.48, 0, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Eye outlines
+            const eyeY = fb.y + fb.height * 0.35;
+            ctx.beginPath();
+            ctx.ellipse(centerX - fb.width * 0.15, eyeY, fb.width * 0.08, fb.height * 0.04, 0, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.ellipse(centerX + fb.width * 0.15, eyeY, fb.width * 0.08, fb.height * 0.04, 0, 0, Math.PI * 2);
+            ctx.stroke();
+
+            // Smile
+            ctx.beginPath();
+            ctx.arc(centerX, centerY + fb.height * 0.1, fb.width * 0.15, 0.2, Math.PI - 0.2);
+            ctx.stroke();
+
+            ctx.shadowBlur = 0;
+        }
+
+        function drawPixelFilter(ctx, fb, t) {
+            const pixelSize = 6;
+            const cols = Math.ceil(fb.width / pixelSize);
+            const rows = Math.ceil(fb.height / pixelSize);
+
+            for (let r = 0; r < rows; r++) {
+                for (let c = 0; c < cols; c++) {
+                    if (Math.random() > 0.7) {
+                        const hue = (t * 30 + r * 10 + c * 10) % 360;
+                        ctx.fillStyle = `hsla(${hue}, 80%, 50%, 0.3)`;
+                        ctx.fillRect(fb.x + c * pixelSize, fb.y + r * pixelSize, pixelSize - 1, pixelSize - 1);
+                    }
+                }
+            }
+        }
+
+        function drawRainbowFilter(ctx, fb, t) {
+            const centerX = fb.x + fb.width / 2;
+
+            // Rainbow arc above head
+            const colors = ['#FF0000', '#FF7700', '#FFFF00', '#00FF00', '#0000FF', '#4B0082', '#9400D3'];
+            const arcY = fb.y - 20;
+            const arcWidth = fb.width * 0.7;
+
+            colors.forEach((color, i) => {
+                const radius = arcWidth * 0.3 + i * 6;
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 5;
+                ctx.globalAlpha = (0.4 + Math.sin(t * 2 + i * 0.5) * 0.2) * (app.filterIntensity / 100);
+                ctx.beginPath();
+                ctx.arc(centerX, arcY + 20, radius, Math.PI, 0);
+                ctx.stroke();
+            });
+
+            ctx.globalAlpha = app.filterIntensity / 100;
+        }
+
+        // Drawing Helpers
+        function drawStar(ctx, cx, cy, spikes, outerRadius, innerRadius) {
+            let rot = Math.PI / 2 * 3;
+            let x = cx;
+            let y = cy;
+            let step = Math.PI / spikes;
+
+            ctx.beginPath();
+            ctx.moveTo(cx, cy - outerRadius);
+
+            for (let i = 0; i < spikes; i++) {
+                x = cx + Math.cos(rot) * outerRadius;
+                y = cy + Math.sin(rot) * outerRadius;
+                ctx.lineTo(x, y);
+                rot += step;
+
+                x = cx + Math.cos(rot) * innerRadius;
+                y = cy + Math.sin(rot) * innerRadius;
+                ctx.lineTo(x, y);
+                rot += step;
+            }
+
+            ctx.lineTo(cx, cy - outerRadius);
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        function roundRect(ctx, x, y, width, height, radius) {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.lineTo(x + width - radius, y);
+            ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+            ctx.lineTo(x + width, y + height - radius);
+            ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+            ctx.lineTo(x + radius, y + height);
+            ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+            ctx.lineTo(x, y + radius);
+            ctx.quadraticCurveTo(x, y, x + radius, y);
+            ctx.closePath();
+        }
+
+        // Particles
+        function renderParticles(timestamp) {
+            // Remove old particles
+            app.arParticles = app.arParticles.filter(p => timestamp - p.created < p.lifetime);
+
+            // Add new ambient particles
+            if (app.currentFilter !== 'none' && Math.random() > 0.85) {
+                app.arParticles.push({
+                    x: Math.random() * app.arCanvas.width,
+                    y: app.arCanvas.height + 10,
+                    vx: (Math.random() - 0.5) * 2,
+                    vy: -(Math.random() * 2 + 1),
+                    size: Math.random() * 3 + 1,
+                    hue: Math.random() * 360,
+                    created: timestamp,
+                    lifetime: 3000 + Math.random() * 2000
+                });
+            }
+
+            const ctx = app.arCtx;
+            app.arParticles.forEach(p => {
+                const age = (timestamp - p.created) / p.lifetime;
+                const alpha = 1 - age;
+
+                p.x += p.vx;
+                p.y += p.vy;
+                p.vy -= 0.01;
+
+                ctx.fillStyle = `hsla(${p.hue}, 80%, 70%, ${alpha * 0.5})`;
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+        }
+
+        // Toast
+        function showToast(message) {
+            els.toast.textContent = message;
+            els.toast.classList.add('show');
+            clearTimeout(app.toastTimeout);
+            app.toastTimeout = setTimeout(() => {
+                els.toast.classList.remove('show');
+            }, 2000);
+        }
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
