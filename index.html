@@ -82,539 +82,920 @@
             width: 44px;
             height: 44px;
             border: none;
-            background: rgba(255,255,255,0.15);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            color: #fff;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>AR Interface</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none}
+:root{--safe-top:env(safe-area-inset-top,20px);--safe-bottom:env(safe-area-inset-bottom,20px);--accent:0,200,255}
+body{background:#000;overflow:hidden;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;height:100dvh;width:100vw;position:fixed;touch-action:none}
+
+/* Camera */
+#cam{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);z-index:1}
+#procCanvas{display:none}
+#debugCanvas{position:absolute;top:var(--safe-top);left:10px;width:160px;height:120px;z-index:200;border:2px solid rgba(0,255,0,0.5);border-radius:8px;display:none;image-rendering:pixelated;background:#000}
+#debugCanvas.show{display:block}
+
+/* AR World */
+.ar-world{position:absolute;top:0;left:0;width:100%;height:100%;z-index:10;perspective:900px;perspective-origin:50% 50%;transition:transform 0.1s ease-out}
+
+/* Scanning Overlay */
+.scan-overlay{position:absolute;top:0;left:0;right:0;bottom:0;z-index:5;pointer-events:none;opacity:0;transition:opacity 0.5s}
+.scan-overlay.active{opacity:1}
+.scan-grid{position:absolute;top:0;left:0;right:0;bottom:0;background-image:linear-gradient(rgba(0,200,255,0.04) 1px,transparent 1px),linear-gradient(90deg,rgba(0,200,255,0.04) 1px,transparent 1px);background-size:40px 40px}
+.scan-line{position:absolute;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent 0%,rgba(var(--accent),0.5) 50%,transparent 100%);box-shadow:0 0 15px rgba(var(--accent),0.3);animation:scanY 4s linear infinite}
+@keyframes scanY{0%{top:-2px}100%{top:100%}}
+
+/* Hand Cursor */
+.hand-cursor{position:absolute;z-index:100;pointer-events:none;transition:opacity 0.3s;opacity:0;filter:drop-shadow(0 0 10px rgba(var(--accent),0.5))}
+.hand-cursor.visible{opacity:1}
+.hand-cursor svg{display:block}
+.cursor-label{position:absolute;bottom:-28px;left:50%;transform:translateX(-50%);white-space:nowrap;font-size:10px;font-weight:700;color:rgba(var(--accent),0.9);text-transform:uppercase;letter-spacing:1px;text-shadow:0 0 10px rgba(var(--accent),0.5)}
+
+/* Depth bar under cursor */
+.depth-bar{position:absolute;bottom:-45px;left:50%;transform:translateX(-50%);width:60px;height:5px;background:rgba(255,255,255,0.1);border-radius:3px;overflow:hidden}
+.depth-fill{height:100%;width:0%;background:linear-gradient(90deg,rgba(var(--accent),0.8),#a855f7);border-radius:3px;transition:width 0.15s}
+
+/* Status Bar */
+.status-bar{position:absolute;top:0;left:0;right:0;padding:var(--safe-top) 16px 10px;display:flex;justify-content:space-between;align-items:center;z-index:50;background:linear-gradient(to bottom,rgba(0,0,0,0.5),transparent)}
+.status-left,.status-right{display:flex;align-items:center;gap:10px}
+.ar-badge{background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;font-size:10px;font-weight:800;padding:4px 10px;border-radius:10px;letter-spacing:1.5px}
+.track-pill{display:flex;align-items:center;gap:6px;background:rgba(0,0,0,0.4);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:5px 12px;border-radius:14px;color:#fff;font-size:12px;font-weight:600}
+.track-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;animation:pulse 2s infinite}
+.track-dot.off{background:#ef4444;animation:none}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+.status-time{color:rgba(255,255,255,0.7);font-size:13px;font-weight:600;font-variant-numeric:tabular-nums}
+.debug-toggle{width:36px;height:36px;border:none;background:rgba(255,255,255,0.1);backdrop-filter:blur(10px);border-radius:50%;color:#fff;font-size:11px;font-weight:800;cursor:pointer;transition:all .2s}
+.debug-toggle.active{background:rgba(0,255,0,0.2);color:#0f0}
+
+/* AR Panels */
+.ar-panel{position:absolute;background:rgba(10,10,30,0.55);backdrop-filter:blur(25px) saturate(1.5);-webkit-backdrop-filter:blur(25px) saturate(1.5);border:1px solid rgba(255,255,255,0.08);border-radius:24px;padding:20px;transform-style:preserve-3d;transition:transform 0.5s cubic-bezier(.34,1.56,.64,1),opacity 0.4s;box-shadow:0 8px 32px rgba(0,0,0,0.3),inset 0 1px 0 rgba(255,255,255,0.06)}
+.ar-panel.hidden{opacity:0;pointer-events:none;transform:scale(0.85) translateZ(-50px)!important}
+
+/* Main Panel */
+.main-panel{bottom:80px;left:50%;transform:translateX(-50%) rotateX(2deg) translateZ(0px);width:min(340px,90vw)}
+.panel-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;padding:0 4px}
+.panel-title{color:rgba(255,255,255,0.5);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:2px}
+.panel-line{flex:1;height:1px;background:linear-gradient(90deg,transparent,rgba(255,255,255,0.1),transparent);margin:0 12px}
+.panel-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+
+/* AR Buttons */
+.ar-btn{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;aspect-ratio:1;border-radius:20px;background:rgba(255,255,255,0.05);border:1.5px solid rgba(255,255,255,0.06);cursor:pointer;transition:all .25s cubic-bezier(.34,1.56,.64,1);overflow:visible}
+.ar-btn:active{transform:scale(.92)}
+.btn-icon{font-size:28px;line-height:1;margin-bottom:4px;transition:transform .3s}
+.btn-label{font-size:9px;font-weight:700;color:rgba(255,255,255,0.5);text-transform:uppercase;letter-spacing:.8px;transition:color .3s}
+
+/* Button hover ring */
+.btn-ring{position:absolute;top:-6px;left:-6px;right:-6px;bottom:-6px;border-radius:24px;border:2px solid transparent;transition:all .3s;pointer-events:none}
+
+/* Dwell progress */
+.btn-progress{position:absolute;top:-4px;left:-4px;right:-4px;bottom:-4px;border-radius:23px;pointer-events:none}
+.btn-progress svg{width:100%;height:100%;transform:rotate(-90deg)}
+.btn-progress circle{fill:none;stroke:rgba(var(--accent),0.8);stroke-width:2;stroke-dasharray:400;stroke-dashoffset:400;transition:stroke-dashoffset .1s linear}
+
+/* Button states */
+.ar-btn.hovered{background:rgba(var(--accent),0.08);border-color:rgba(var(--accent),0.2);transform:scale(1.08)}
+.ar-btn.hovered .btn-ring{border-color:rgba(var(--accent),0.15);box-shadow:0 0 25px rgba(var(--accent),0.1)}
+.ar-btn.hovered .btn-label{color:rgba(255,255,255,0.9)}
+.ar-btn.hovered .btn-icon{transform:scale(1.1)}
+.ar-btn.pressing{transform:scale(.9)!important;background:rgba(var(--accent),0.15)}
+.ar-btn.activated{animation:btnPop .4s cubic-bezier(.34,1.56,.64,1)}
+@keyframes btnPop{0%{transform:scale(.8)}50%{transform:scale(1.15)}100%{transform:scale(1)}}
+
+/* Sub Panels */
+.sub-panel{position:absolute;width:min(300px,85vw)}
+.music-panel{bottom:90px;left:50%;transform:translateX(-50%) translateZ(20px) rotateX(1deg)}
+.weather-panel{bottom:90px;left:50%;transform:translateX(-50%) translateZ(20px) rotateX(1deg)}
+.settings-panel{bottom:90px;left:50%;transform:translateX(-50%) translateZ(20px) rotateX(1deg)}
+
+/* Sub panel content */
+.sub-header{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.back-btn{width:36px;height:36px;border-radius:12px;border:1.5px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:#fff;font-size:16px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .2s}
+.back-btn:active{transform:scale(.9)}
+.sub-title{color:#fff;font-size:16px;font-weight:700}
+
+/* Music Panel */
+.music-display{text-align:center;margin-bottom:16px}
+.album-art{width:80px;height:80px;border-radius:16px;background:linear-gradient(135deg,#6366f1,#ec4899);margin:0 auto 12px;display:flex;align-items:center;justify-content:center;font-size:36px;animation:albumSpin 8s linear infinite paused}
+.album-art.playing{animation-play-state:running}
+@keyframes albumSpin{to{transform:rotate(360deg)}}
+.song-title{color:#fff;font-size:14px;font-weight:600}
+.song-artist{color:rgba(255,255,255,0.5);font-size:12px;margin-top:2px}
+.music-controls{display:flex;justify-content:center;align-items:center;gap:20px}
+.music-btn{width:48px;height:48px;border-radius:50%;border:1.5px solid rgba(255,255,255,0.1);background:rgba(255,255,255,0.05);color:#fff;font-size:20px;display:flex;align-items:center;justify-content:center;cursor:pointer;transition:all .2s}
+.music-btn.play-btn{width:56px;height:56px;background:rgba(var(--accent),0.15);border-color:rgba(var(--accent),0.3)}
+.music-btn:active{transform:scale(.9)}
+.music-progress{margin-top:16px;height:4px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden}
+.music-progress-fill{height:100%;width:35%;background:linear-gradient(90deg,rgba(var(--accent),0.8),#a855f7);border-radius:2px;transition:width 0.3s}
+
+/* Weather Panel */
+.weather-main{text-align:center;margin-bottom:16px}
+.weather-icon{font-size:56px;margin-bottom:8px}
+.weather-temp{color:#fff;font-size:42px;font-weight:200}
+.weather-desc{color:rgba(255,255,255,0.6);font-size:13px;margin-top:4px}
+.weather-row{display:flex;justify-content:space-around;margin-top:12px}
+.weather-item{text-align:center}
+.weather-item-val{color:#fff;font-size:16px;font-weight:600}
+.weather-item-lbl{color:rgba(255,255,255,0.4);font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-top:2px}
+
+/* Settings Panel */
+.setting-row{display:flex;justify-content:space-between;align-items:center;padding:12px 0;border-bottom:1px solid rgba(255,255,255,0.05)}
+.setting-row:last-child{border:none}
+.setting-label{color:rgba(255,255,255,0.8);font-size:13px;font-weight:500}
+.setting-toggle{width:44px;height:26px;border-radius:13px;background:rgba(255,255,255,0.15);border:none;cursor:pointer;position:relative;transition:background .3s}
+.setting-toggle.on{background:rgba(var(--accent),0.5)}
+.setting-toggle::after{content:'';position:absolute;top:3px;left:3px;width:20px;height:20px;border-radius:50%;background:#fff;transition:transform .3s}
+.setting-toggle.on::after{transform:translateX(18px)}
+.setting-slider{width:120px;-webkit-appearance:none;height:4px;border-radius:2px;background:rgba(255,255,255,0.15);outline:none}
+.setting-slider::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;cursor:pointer;box-shadow:0 2px 6px rgba(0,0,0,0.3)}
+
+/* Particles Canvas */
+#particles{position:absolute;top:0;left:0;width:100%;height:100%;z-index:90;pointer-events:none}
+
+/* Instruction Overlay */
+.instructions{position:absolute;top:0;left:0;right:0;bottom:0;z-index:150;display:flex;flex-direction:column;align-items:center;justify-content:center;background:rgba(0,0,0,0.7);backdrop-filter:blur(10px);transition:opacity .5s;padding:40px}
+.instructions.hidden{opacity:0;pointer-events:none}
+.instruct-hand{font-size:80px;animation:handWave 2s ease-in-out infinite}
+@keyframes handWave{0%,100%{transform:rotate(0deg) translateY(0)}25%{transform:rotate(15deg) translateY(-10px)}75%{transform:rotate(-15deg) translateY(-5px)}}
+.instruct-title{color:#fff;font-size:22px;font-weight:700;margin:24px 0 8px}
+.instruct-sub{color:rgba(255,255,255,0.6);font-size:14px;text-align:center;line-height:1.5;max-width:280px}
+.instruct-or{color:rgba(255,255,255,0.3);font-size:12px;margin:20px 0;text-transform:uppercase;letter-spacing:2px}
+.instruct-btn{background:linear-gradient(135deg,rgba(var(--accent),0.3),rgba(168,85,247,0.3));border:1px solid rgba(var(--accent),0.3);color:#fff;padding:14px 36px;border-radius:16px;font-size:15px;font-weight:600;cursor:pointer;transition:all .3s;backdrop-filter:blur(10px)}
+.instruct-btn:active{transform:scale(.95)}
+.instruct-skip{color:rgba(255,255,255,0.4);font-size:12px;margin-top:16px;background:none;border:none;cursor:pointer;text-decoration:underline}
+
+/* Permission Screen */
+.perm-screen{position:absolute;top:0;left:0;right:0;bottom:0;z-index:200;background:linear-gradient(135deg,#0a0a1a,#1a1035,#0a0a1a);display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px}
+.perm-screen.hidden{display:none}
+.perm-icon{width:100px;height:100px;background:linear-gradient(135deg,#6366f1,#a855f7);border-radius:30px;display:flex;align-items:center;justify-content:center;margin-bottom:30px;font-size:44px;box-shadow:0 20px 60px rgba(99,102,241,0.3)}
+.perm-screen h2{color:#fff;font-size:24px;font-weight:700;margin-bottom:10px}
+.perm-screen p{color:rgba(255,255,255,0.5);font-size:14px;text-align:center;line-height:1.6;max-width:280px;margin-bottom:30px}
+.perm-btn{background:linear-gradient(135deg,#6366f1,#a855f7);color:#fff;border:none;padding:16px 48px;border-radius:16px;font-size:16px;font-weight:600;cursor:pointer;box-shadow:0 10px 40px rgba(99,102,241,0.4)}
+.perm-btn:active{transform:scale(.95)}
+
+/* Toast */
+.toast{position:absolute;top:80px;left:50%;transform:translateX(-50%) translateY(-10px);background:rgba(0,0,0,0.7);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);color:#fff;padding:10px 20px;border-radius:20px;font-size:13px;font-weight:600;z-index:180;opacity:0;transition:all .3s;pointer-events:none;white-space:nowrap;border:1px solid rgba(255,255,255,0.05)}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+/* Ambient particles */
+.ambient-dot{position:absolute;width:3px;height:3px;background:rgba(var(--accent),0.15);border-radius:50%;pointer-events:none;animation:floatUp linear infinite;z-index:2}
+@keyframes floatUp{0%{transform:translateY(0) translateX(0);opacity:0}10%{opacity:1}90%{opacity:1}100%{transform:translateY(-100vh) translateX(30px);opacity:0}}
+</style>
+</head>
+<body>
+
+<!-- Permission Screen -->
+<div class="perm-screen" id="permScreen">
+    <div class="perm-icon">📸</div>
+    <h2>AR Interface</h2>
+    <p>Enable your front camera to use hand tracking and interact with floating AR controls.</p>
+    <button class="perm-btn" id="permBtn">Enable Camera</button>
+</div>
+
+<!-- Camera -->
+<video id="cam" autoplay playsinline muted></video>
+<canvas id="procCanvas"></canvas>
+<canvas id="debugCanvas"></canvas>
+<canvas id="particles"></canvas>
+
+<!-- Scan overlay -->
+<div class="scan-overlay" id="scanOverlay">
+    <div class="scan-grid"></div>
+    <div class="scan-line"></div>
+</div>
+
+<!-- AR World -->
+<div class="ar-world" id="arWorld">
+
+    <!-- Status Bar -->
+    <div class="status-bar">
+        <div class="status-left">
+            <span class="ar-badge">AR</span>
+            <div class="track-pill">
+                <div class="track-dot" id="trackDot"></div>
+                <span id="trackLabel">Scanning…</span>
+            </div>
+        </div>
+        <div class="status-right">
+            <span class="status-time" id="clock"></span>
+            <button class="debug-toggle" id="debugToggle">D</button>
+        </div>
+    </div>
+
+    <!-- Main Panel -->
+    <div class="ar-panel main-panel" id="mainPanel">
+        <div class="panel-header">
+            <span class="panel-title">Menu</span>
+            <div class="panel-line"></div>
+            <span class="panel-title">✦</span>
+        </div>
+        <div class="panel-grid">
+            <button class="ar-btn" data-action="music">
+                <span class="btn-icon">🎵</span><span class="btn-label">Music</span>
+                <div class="btn-ring"></div>
+                <div class="btn-progress"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/></svg></div>
+            </button>
+            <button class="ar-btn" data-action="weather">
+                <span class="btn-icon">☀️</span><span class="btn-label">Weather</span>
+                <div class="btn-ring"></div>
+                <div class="btn-progress"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/></svg></div>
+            </button>
+            <button class="ar-btn" data-action="messages">
+                <span class="btn-icon">💬</span><span class="btn-label">Msgs</span>
+                <div class="btn-ring"></div>
+                <div class="btn-progress"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/></svg></div>
+            </button>
+            <button class="ar-btn" data-action="capture">
+                <span class="btn-icon">📷</span><span class="btn-label">Capture</span>
+                <div class="btn-ring"></div>
+                <div class="btn-progress"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/></svg></div>
+            </button>
+            <button class="ar-btn" data-action="settings">
+                <span class="btn-icon">⚙️</span><span class="btn-label">Settings</span>
+                <div class="btn-ring"></div>
+                <div class="btn-progress"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/></svg></div>
+            </button>
+            <button class="ar-btn" data-action="color">
+                <span class="btn-icon">🎨</span><span class="btn-label">Theme</span>
+                <div class="btn-ring"></div>
+                <div class="btn-progress"><svg viewBox="0 0 100 100"><circle cx="50" cy="50" r="46"/></svg></div>
+            </button>
+        </div>
+    </div>
+
+    <!-- Music Sub-Panel -->
+    <div class="ar-panel sub-panel music-panel hidden" id="musicPanel">
+        <div class="sub-header">
+            <button class="back-btn ar-btn" data-action="back">←</button>
+            <span class="sub-title">Music</span>
+        </div>
+        <div class="music-display">
+            <div class="album-art" id="albumArt">🎶</div>
+            <div class="song-title">Cosmic Drift</div>
+            <div class="song-artist">AR Soundscape</div>
+        </div>
+        <div class="music-controls">
+            <button class="music-btn ar-btn" data-action="prev">⏮</button>
+            <button class="music-btn play-btn ar-btn" data-action="play" id="playBtn">▶</button>
+            <button class="music-btn ar-btn" data-action="next">⏭</button>
+        </div>
+        <div class="music-progress"><div class="music-progress-fill" id="musicFill"></div></div>
+    </div>
+
+    <!-- Weather Sub-Panel -->
+    <div class="ar-panel sub-panel weather-panel hidden" id="weatherPanel">
+        <div class="sub-header">
+            <button class="back-btn ar-btn" data-action="back">←</button>
+            <span class="sub-title">Weather</span>
+        </div>
+        <div class="weather-main">
+            <div class="weather-icon">⛅</div>
+            <div class="weather-temp">23°</div>
+            <div class="weather-desc">Partly Cloudy</div>
+        </div>
+        <div class="weather-row">
+            <div class="weather-item"><div class="weather-item-val">62%</div><div class="weather-item-lbl">Humidity</div></div>
+            <div class="weather-item"><div class="weather-item-val">12km/h</div><div class="weather-item-lbl">Wind</div></div>
+            <div class="weather-item"><div class="weather-item-val">UV 5</div><div class="weather-item-lbl">Index</div></div>
+        </div>
+    </div>
+
+    <!-- Settings Sub-Panel -->
+    <div class="ar-panel sub-panel settings-panel hidden" id="settingsPanel">
+        <div class="sub-header">
+            <button class="back-btn ar-btn" data-action="back">←</button>
+            <span class="sub-title">Settings</span>
+        </div>
+        <div class="setting-row">
+            <span class="setting-label">Sound</span>
+            <button class="setting-toggle on" id="soundToggle"></button>
+        </div>
+        <div class="setting-row">
+            <span class="setting-label">Tracking Sens.</span>
+            <input type="range" class="setting-slider" id="sensSlider" min="1" max="10" value="5">
+        </div>
+        <div class="setting-row">
+            <span class="setting-label">Dwell Speed</span>
+            <input type="range" class="setting-slider" id="dwellSlider" min="5" max="20" value="12">
+        </div>
+        <div class="setting-row">
+            <span class="setting-label">Debug View</span>
+            <button class="setting-toggle" id="debugSettingToggle"></button>
+        </div>
+    </div>
+
+    <!-- Hand Cursor -->
+    <div class="hand-cursor" id="cursor">
+        <svg viewBox="0 0 100 100" width="70" height="70">
+            <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="2"/>
+            <circle cx="50" cy="50" r="44" fill="none" stroke="rgba(var(--accent),0.8)" stroke-width="3" stroke-dasharray="276.5" stroke-dashoffset="276.5" id="cursorProgress" transform="rotate(-90 50 50)" stroke-linecap="round"/>
+            <circle cx="50" cy="50" r="18" fill="rgba(var(--accent),0.06)" id="cursorGlow"/>
+            <circle cx="50" cy="50" r="5" fill="rgba(255,255,255,0.9)"/>
+        </svg>
+        <span class="cursor-label" id="cursorLabel"></span>
+        <div class="depth-bar"><div class="depth-fill" id="depthFill"></div></div>
+    </div>
+</div>
+
+<!-- Instructions -->
+<div class="instructions" id="instructions">
+    <div class="instruct-hand">🖐️</div>
+    <div class="instruct-title">Raise Your Hand</div>
+    <div class="instruct-sub">Move your hand in front of the camera to control the AR cursor. Push forward to press buttons.</div>
+    <div class="instruct-or">— or —</div>
+    <button class="instruct-btn" id="touchModeBtn">Use Touch Controls</button>
+    <button class="instruct-skip" id="skipBtn">I'll try hand tracking</button>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════════════════════════
+//  AR HAND-TRACKED INTERFACE — Zero Dependencies
+// ═══════════════════════════════════════════════
+
+// ── State ──────────────────────────────────────
+const S = {
+    camReady: false,
+    handDetected: false,
+    touchMode: false,
+    debugMode: false,
+    soundOn: true,
+    sensitivity: 5,
+    dwellFrames: 12,      // frames to dwell-activate (~0.8s at 15fps detect)
+    activePanel: 'main',
+    playing: false,
+    musicProgress: 35,
+    themeHue: 190,         // CSS hue for accent color
+
+    // Hand tracking
+    hand: { x: 0, y: 0, smoothX: 0, smoothY: 0, area: 0, smoothArea: 0, baselineArea: 0, pushVal: 0 },
+    faceZone: null,
+    calFrames: 0,
+    calCenters: [],
+    prevFrame: null,
+
+    // Interaction
+    hoveredBtn: null,
+    dwellCounter: 0,
+    lastActivation: 0,
+
+    // Particles
+    particles: [],
+
+    // Perf
+    detectTick: 0,
+    toastTimer: null
+};
+
+// ── DOM ────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const cam = $('cam');
+const procCanvas = $('procCanvas');
+const procCtx = procCanvas.getContext('2d', { willReadFrequently: true });
+const debugCanvas = $('debugCanvas');
+const debugCtx = debugCanvas.getContext('2d');
+const partCanvas = $('particles');
+const partCtx = partCanvas.getContext('2d');
+const cursor = $('cursor');
+const cursorProgress = $('cursorProgress');
+const cursorGlow = $('cursorGlow');
+const cursorLabel = $('cursorLabel');
+const depthFill = $('depthFill');
+const trackDot = $('trackDot');
+const trackLabel = $('trackLabel');
+const arWorld = $('arWorld');
+
+const PW = 160, PH = 120; // Processing resolution
+procCanvas.width = PW; procCanvas.height = PH;
+debugCanvas.width = PW; debugCanvas.height = PH;
+
+// ── Audio Engine ──────────────────────────────
+const Snd = {
+    ctx: null,
+    init() { this.ctx = new (window.AudioContext || window.webkitAudioContext)(); },
+    play(freq, dur, type = 'sine', vol = 0.08) {
+        if (!S.soundOn || !this.ctx) return;
+        try {
+            const o = this.ctx.createOscillator();
+            const g = this.ctx.createGain();
+            o.connect(g); g.connect(this.ctx.destination);
+            o.type = type; o.frequency.value = freq;
+            g.gain.setValueAtTime(vol, this.ctx.currentTime);
+            g.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + dur);
+            o.start(); o.stop(this.ctx.currentTime + dur);
+        } catch(e) {}
+    },
+    hover()    { this.play(900, 0.08); },
+    activate() { this.play(1100, 0.1); setTimeout(() => this.play(1500, 0.12), 60); },
+    back()     { this.play(600, 0.1); },
+    tick()     { this.play(700, 0.04, 'sine', 0.03); }
+};
+
+// ── Camera ─────────────────────────────────────
+async function startCamera() {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: false
+        });
+        cam.srcObject = stream;
+        await cam.play();
+        S.camReady = true;
+        $('permScreen').classList.add('hidden');
+        $('instructions').classList.remove('hidden');
+
+        // Start scan effect
+        $('scanOverlay').classList.add('active');
+        setTimeout(() => $('scanOverlay').classList.remove('active'), 4000);
+
+        spawnAmbientDots();
+        resizeParticles();
+        requestAnimationFrame(mainLoop);
+    } catch (e) {
+        toast('Camera access denied');
+    }
+}
+
+$('permBtn').addEventListener('click', () => { Snd.init(); startCamera(); });
+
+// ── Instructions ──────────────────────────────
+$('touchModeBtn').addEventListener('click', () => {
+    S.touchMode = true;
+    $('instructions').classList.add('hidden');
+    cursor.classList.add('visible');
+    toast('Touch mode — tap & drag to interact');
+});
+
+$('skipBtn').addEventListener('click', () => {
+    S.touchMode = false;
+    $('instructions').classList.add('hidden');
+    toast('Show your hand ✋ to begin tracking');
+});
+
+// ── Touch / Mouse Fallback ────────────────────
+function handlePointerMove(x, y) {
+    if (!S.touchMode) return;
+    S.hand.smoothX += (x - S.hand.smoothX) * 0.4;
+    S.hand.smoothY += (y - S.hand.smoothY) * 0.4;
+    S.handDetected = true;
+    updateCursorPos();
+    hitTest();
+}
+
+function handlePointerDown(x, y) {
+    if (!S.touchMode && !S.handDetected) {
+        // Enable touch mode on any touch if hand not tracked
+        S.touchMode = true;
+        cursor.classList.add('visible');
+    }
+    S.hand.smoothX = x; S.hand.smoothY = y;
+    S.handDetected = true;
+    updateCursorPos();
+
+    // Immediate hit test & activate
+    const btn = getHoveredButton(x, y);
+    if (btn) activateButton(btn);
+}
+
+document.addEventListener('touchmove', e => {
+    e.preventDefault();
+    const t = e.touches[0];
+    handlePointerMove(t.clientX, t.clientY);
+}, { passive: false });
+
+document.addEventListener('touchstart', e => {
+    const t = e.touches[0];
+    handlePointerDown(t.clientX, t.clientY);
+}, { passive: true });
+
+document.addEventListener('mousemove', e => handlePointerMove(e.clientX, e.clientY));
+document.addEventListener('click', e => handlePointerDown(e.clientX, e.clientY));
+
+// ── Hand Tracking ─────────────────────────────
+function isSkin(r, g, b) {
+    // Broad skin detection across skin tones
+    const max = Math.max(r, g, b), min = Math.min(r, g, b);
+    return r > 70 && g > 30 && b > 15 &&
+           r > g && (r - g) > 8 &&
+           (max - min) > 10 &&
+           !(r > 230 && g > 220 && b > 210); // exclude whites
+}
+
+function detectHand() {
+    if (!S.camReady) return;
+    procCtx.drawImage(cam, 0, 0, PW, PH);
+    const frame = procCtx.getImageData(0, 0, PW, PH);
+    const d = frame.data;
+    const step = Math.max(2, 6 - S.sensitivity); // Higher sens = smaller step = more detail
+
+    // ── Face calibration (first ~25 frames) ──
+    if (!S.faceZone && S.calFrames < 25) {
+        let sx = 0, sy = 0, cnt = 0;
+        for (let y = 0; y < PH * 0.65; y += 3) {
+            for (let x = 0; x < PW; x += 3) {
+                const i = (y * PW + x) * 4;
+                if (isSkin(d[i], d[i+1], d[i+2])) { sx += x; sy += y; cnt++; }
+            }
+        }
+        if (cnt > 15) S.calCenters.push({ x: sx / cnt, y: sy / cnt });
+        S.calFrames++;
+        if (S.calFrames >= 25 && S.calCenters.length > 5) {
+            const ax = S.calCenters.reduce((s, c) => s + c.x, 0) / S.calCenters.length;
+            const ay = S.calCenters.reduce((s, c) => s + c.y, 0) / S.calCenters.length;
+            S.faceZone = { x: ax - PW * 0.22, y: Math.max(0, ay - PH * 0.25), w: PW * 0.44, h: PH * 0.45 };
+            trackDot.classList.remove('off');
+            trackLabel.textContent = 'Ready';
+            toast('✋ Hand tracking active');
+        }
+        trackLabel.textContent = 'Calibrating…';
+        return;
+    }
+
+    // ── Detect skin outside face zone ──
+    let sx = 0, sy = 0, cnt = 0;
+    let minX = PW, maxX = 0, minY = PH, maxY = 0;
+
+    for (let y = 0; y < PH; y += step) {
+        for (let x = 0; x < PW; x += step) {
+            if (S.faceZone) {
+                const fz = S.faceZone;
+                if (x >= fz.x && x <= fz.x + fz.w && y >= fz.y && y <= fz.y + fz.h) continue;
+            }
+            const i = (y * PW + x) * 4;
+            if (isSkin(d[i], d[i+1], d[i+2])) {
+                sx += x; sy += y; cnt++;
+                if (x < minX) minX = x; if (x > maxX) maxX = x;
+                if (y < minY) minY = y; if (y > maxY) maxY = y;
+            }
+        }
+    }
+
+    const minPixels = Math.max(15, 40 - S.sensitivity * 4);
+
+    if (cnt >= minPixels) {
+        const rawX = sx / cnt, rawY = sy / cnt;
+        // Mirror X for front camera CSS mirror
+        const screenX = (1 - rawX / PW) * window.innerWidth;
+        const screenY = (rawY / PH) * window.innerHeight;
+
+        const sm = 0.15 + S.sensitivity * 0.03;
+        S.hand.smoothX += (screenX - S.hand.smoothX) * sm;
+        S.hand.smoothY += (screenY - S.hand.smoothY) * sm;
+        S.hand.area = cnt;
+        S.hand.smoothArea += (cnt - S.hand.smoothArea) * 0.15;
+
+        if (S.hand.baselineArea === 0) S.hand.baselineArea = cnt;
+        else S.hand.baselineArea += (cnt - S.hand.baselineArea) * 0.003;
+
+        const ratio = S.hand.area / S.hand.baselineArea;
+        S.hand.pushVal = Math.max(0, Math.min(1, (ratio - 1) * 2));
+
+        if (!S.handDetected) {
+            S.handDetected = true;
+            cursor.classList.add('visible');
+            trackDot.classList.remove('off');
+            trackLabel.textContent = 'Tracking';
+            if (!S.touchMode) toast('Hand detected ✋');
+        }
+    } else {
+        if (S.handDetected && !S.touchMode) {
+            S.handDetected = false;
+            cursor.classList.remove('visible');
+            trackDot.classList.add('off');
+            trackLabel.textContent = 'No hand';
+        }
+        S.hand.pushVal = Math.max(0, S.hand.pushVal - 0.03);
+    }
+
+    // ── Debug visualization ──
+    if (S.debugMode) drawDebug(d, PW, PH, step);
+}
+
+function drawDebug(d, PW, PH, step) {
+    debugCtx.clearRect(0, 0, PW, PH);
+    const img = debugCtx.createImageData(PW, PH);
+    for (let y = 0; y < PH; y++) {
+        for (let x = 0; x < PW; x++) {
+            const i = (y * PW + x) * 4;
+            const skin = isSkin(d[i], d[i+1], d[i+2]);
+            let inFace = false;
+            if (S.faceZone) {
+                const fz = S.faceZone;
+                inFace = x >= fz.x && x <= fz.x + fz.w && y >= fz.y && y <= fz.y + fz.h;
+            }
+            if (skin && inFace) { img.data[i]=255; img.data[i+1]=0; img.data[i+2]=0; img.data[i+3]=180; }
+            else if (skin) { img.data[i]=0; img.data[i+1]=255; img.data[i+2]=0; img.data[i+3]=200; }
+            else { img.data[i+3]=0; }
+        }
+    }
+    debugCtx.putImageData(img, 0, 0);
+    // Draw face zone
+    if (S.faceZone) {
+        debugCtx.strokeStyle = 'red';
+        debugCtx.lineWidth = 1;
+        debugCtx.strokeRect(S.faceZone.x, S.faceZone.y, S.faceZone.w, S.faceZone.h);
+    }
+}
+
+// ── Cursor & Interaction ──────────────────────
+function updateCursorPos() {
+    cursor.style.transform = `translate(${S.hand.smoothX - 35}px, ${S.hand.smoothY - 35}px)`;
+    depthFill.style.width = (S.hand.pushVal * 100) + '%';
+
+    // Parallax on AR world
+    const px = (S.hand.smoothX / window.innerWidth - 0.5) * -12;
+    const py = (S.hand.smoothY / window.innerHeight - 0.5) * -8;
+    arWorld.style.transform = `translate(${px}px, ${py}px)`;
+}
+
+function getHoveredButton(x, y) {
+    const btns = document.querySelectorAll('.ar-btn');
+    for (const btn of btns) {
+        if (btn.closest('.ar-panel.hidden')) continue;
+        const r = btn.getBoundingClientRect();
+        const pad = 8;
+        if (x >= r.left - pad && x <= r.right + pad && y >= r.top - pad && y <= r.bottom + pad) {
+            return btn;
+        }
+    }
+    return null;
+}
+
+function hitTest() {
+    const btn = getHoveredButton(S.hand.smoothX, S.hand.smoothY);
+
+    if (btn !== S.hoveredBtn) {
+        // Unhover previous
+        if (S.hoveredBtn) {
+            S.hoveredBtn.classList.remove('hovered', 'pressing');
+            resetDwellProgress(S.hoveredBtn);
+        }
+        S.hoveredBtn = btn;
+        S.dwellCounter = 0;
+
+        if (btn) {
+            btn.classList.add('hovered');
+            Snd.hover();
+            cursorLabel.textContent = btn.querySelector('.btn-label')?.textContent || '';
+        } else {
+            cursorLabel.textContent = '';
+        }
+    }
+
+    // Dwell progress
+    if (S.hoveredBtn && !S.touchMode) {
+        S.dwellCounter++;
+        const progress = Math.min(1, S.dwellCounter / S.dwellFrames);
+        setDwellProgress(S.hoveredBtn, progress);
+
+        // Push acceleration: push speeds up dwell
+        if (S.hand.pushVal > 0.3) {
+            S.dwellCounter += 1; // 2x speed when pushing
+            S.hoveredBtn.classList.add('pressing');
+        } else {
+            S.hoveredBtn.classList.remove('pressing');
         }
 
-        .top-bar-btn:active {
-            transform: scale(0.9);
-            background: rgba(255,255,255,0.3);
+        if (progress >= 1) {
+            activateButton(S.hoveredBtn);
+            S.dwellCounter = 0;
         }
 
-        .top-bar-btn svg {
-            width: 22px;
-            height: 22px;
-            fill: none;
-            stroke: #fff;
-            stroke-width: 2;
-            stroke-linecap: round;
-            stroke-linejoin: round;
-        }
+        // Progress tick sound
+        if (S.dwellCounter % 4 === 0 && progress < 1) Snd.tick();
+    }
+}
 
-        .top-bar-center {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
+function setDwellProgress(btn, val) {
+    const circle = btn.querySelector('.btn-progress circle');
+    if (!circle) return;
+    const circ = 2 * Math.PI * 46; // ~289
+    circle.style.strokeDashoffset = circ * (1 - val);
+    // Also update cursor ring
+    cursorProgress.style.strokeDashoffset = 276.5 * (1 - val);
+}
 
-        .ar-badge {
-            background: linear-gradient(135deg, #6366f1, #a855f7);
-            color: #fff;
-            font-size: 11px;
-            font-weight: 700;
-            padding: 4px 10px;
-            border-radius: 12px;
-            letter-spacing: 1px;
-        }
+function resetDwellProgress(btn) {
+    const circle = btn.querySelector('.btn-progress circle');
+    if (circle) circle.style.strokeDashoffset = 400;
+    cursorProgress.style.strokeDashoffset = 276.5;
+}
 
-        .tracking-status {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            color: #fff;
-            font-size: 13px;
-            font-weight: 500;
-            background: rgba(0,0,0,0.3);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            padding: 6px 12px;
-            border-radius: 16px;
-        }
+// ── Button Actions ────────────────────────────
+function activateButton(btn) {
+    const now = Date.now();
+    if (now - S.lastActivation < 400) return; // debounce
+    S.lastActivation = now;
 
-        .tracking-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 50%;
-            background: #22c55e;
-            animation: pulse 2s infinite;
-        }
+    const action = btn.dataset.action;
+    btn.classList.remove('hovered', 'pressing');
+    btn.classList.add('activated');
+    setTimeout(() => btn.classList.remove('activated'), 500);
+    resetDwellProgress(btn);
+    S.dwellCounter = 0;
+    S.hoveredBtn = null;
+    cursorLabel.textContent = '';
 
-        .tracking-dot.lost {
-            background: #ef4444;
-            animation: none;
-        }
+    Snd.activate();
+    if (navigator.vibrate) navigator.vibrate(30);
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; transform: scale(1); }
-            50% { opacity: 0.5; transform: scale(0.8); }
-        }
+    // Burst particles from button
+    const r = btn.getBoundingClientRect();
+    burstParticles(r.left + r.width / 2, r.top + r.height / 2, 15);
 
-        /* AR Filters Carousel */
-        .filters-bar {
-            position: absolute;
-            bottom: 180px;
-            left: 0;
-            right: 0;
-            z-index: 10;
-            padding: 0 12px;
-        }
+    switch (action) {
+        case 'music':    showPanel('musicPanel'); break;
+        case 'weather':  showPanel('weatherPanel'); break;
+        case 'settings': showPanel('settingsPanel'); break;
+        case 'messages': toast('💬 3 new messages'); break;
+        case 'capture':  capturePhoto(); break;
+        case 'color':    cycleTheme(); break;
+        case 'back':     showPanel('mainPanel'); Snd.back(); break;
+        case 'play':     togglePlay(); break;
+        case 'prev':     toast('⏮ Previous track'); break;
+        case 'next':     toast('⏭ Next track'); S.musicProgress = 0; break;
+    }
+}
 
-        .filters-scroll {
-            display: flex;
-            gap: 12px;
-            overflow-x: auto;
-            padding: 8px 4px;
-            scroll-snap-type: x mandatory;
-            -webkit-overflow-scrolling: touch;
-            scrollbar-width: none;
-        }
+function showPanel(id) {
+    ['mainPanel', 'musicPanel', 'weatherPanel', 'settingsPanel'].forEach(pid => {
+        $(pid).classList.toggle('hidden', pid !== id);
+    });
+    S.activePanel = id;
+}
 
-        .filters-scroll::-webkit-scrollbar {
-            display: none;
-        }
+function togglePlay() {
+    S.playing = !S.playing;
+    $('playBtn').querySelector('.btn-icon').textContent = S.playing ? '⏸' : '▶';
+    $('albumArt').classList.toggle('playing', S.playing);
+    toast(S.playing ? '▶ Playing' : '⏸ Paused');
+}
 
-        .filter-item {
-            flex-shrink: 0;
-            width: 64px;
-            height: 64px;
-            border-radius: 20px;
-            border: 2.5px solid rgba(255,255,255,0.3);
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            background: rgba(255,255,255,0.1);
-            backdrop-filter: blur(10px);
-            -webkit-backdrop-filter: blur(10px);
-            scroll-snap-align: center;
-            position: relative;
-            overflow: hidden;
-        }
+function capturePhoto() {
+    // Flash
+    const flash = document.createElement('div');
+    flash.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:#fff;z-index:999;opacity:1;transition:opacity .3s';
+    document.body.appendChild(flash);
+    setTimeout(() => { flash.style.opacity = '0'; setTimeout(() => flash.remove(), 300); }, 50);
+    toast('📸 Photo captured!');
+}
 
-        .filter-item:active {
-            transform: scale(0.92);
-        }
+const themes = [190, 280, 340, 30, 150, 60];
+let themeIdx = 0;
+function cycleTheme() {
+    themeIdx = (themeIdx + 1) % themes.length;
+    S.themeHue = themes[themeIdx];
+    document.documentElement.style.setProperty('--accent',
+        hslToRgb(S.themeHue));
+    toast('🎨 Theme updated');
+}
 
-        .filter-item.active {
-            border-color: #fff;
-            box-shadow: 0 0 20px rgba(255,255,255,0.3);
-            background: rgba(255,255,255,0.2);
-        }
+function hslToRgb(h) {
+    const s = 0.78, l = 0.55;
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
+    const m = l - c / 2;
+    let r, g, b;
+    if (h < 60) { r=c; g=x; b=0; }
+    else if (h < 120) { r=x; g=c; b=0; }
+    else if (h < 180) { r=0; g=c; b=x; }
+    else if (h < 240) { r=0; g=x; b=c; }
+    else if (h < 300) { r=x; g=0; b=c; }
+    else { r=c; g=0; b=x; }
+    return `${Math.round((r+m)*255)},${Math.round((g+m)*255)},${Math.round((b+m)*255)}`;
+}
 
-        .filter-item .filter-icon {
-            font-size: 26px;
-            line-height: 1;
-        }
+// ── Settings Bindings ─────────────────────────
+$('soundToggle').addEventListener('click', function() {
+    S.soundOn = !S.soundOn;
+    this.classList.toggle('on', S.soundOn);
+    toast(S.soundOn ? '🔊 Sound on' : '🔇 Sound off');
+});
 
-        .filter-item .filter-label {
-            font-size: 8px;
-            color: #fff;
-            margin-top: 2px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
+$('sensSlider').addEventListener('input', function() {
+    S.sensitivity = parseInt(this.value);
+});
 
-        /* Bottom Controls */
-        .bottom-controls {
-            position: absolute;
-            bottom: 0;
-            left: 0;
-            right: 0;
-            padding: 20px 30px calc(var(--safe-bottom) + 16px);
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            z-index: 10;
-            background: linear-gradient(to top, rgba(0,0,0,0.6) 0%, transparent 100%);
-        }
+$('dwellSlider').addEventListener('input', function() {
+    S.dwellFrames = parseInt(this.value);
+});
 
-        .bottom-btn {
-            width: 50px;
-            height: 50px;
-            border: none;
-            background: rgba(255,255,255,0.15);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: all 0.2s ease;
-        }
+$('debugToggle').addEventListener('click', function() {
+    S.debugMode = !S.debugMode;
+    this.classList.toggle('active', S.debugMode);
+    debugCanvas.classList.toggle('show', S.debugMode);
+});
 
-        .bottom-btn:active {
-            transform: scale(0.9);
-            background: rgba(255,255,255,0.3);
-        }
+$('debugSettingToggle').addEventListener('click', function() {
+    S.debugMode = !S.debugMode;
+    this.classList.toggle('on', S.debugMode);
+    $('debugToggle').classList.toggle('active', S.debugMode);
+    debugCanvas.classList.toggle('show', S.debugMode);
+});
 
-        .bottom-btn svg {
-            width: 24px;
-            height: 24px;
-            fill: none;
-            stroke: #fff;
-            stroke-width: 2;
-            stroke-linecap: round;
-            stroke-linejoin: round;
-        }
+// ── Particles ─────────────────────────────────
+function resizeParticles() {
+    partCanvas.width = window.innerWidth;
+    partCanvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeParticles);
 
-        /* Shutter Button */
-        .shutter-container {
-            position: relative;
-        }
+function burstParticles(cx, cy, count) {
+    for (let i = 0; i < count; i++) {
+        const angle = (Math.PI * 2 * i) / count + Math.random() * 0.5;
+        const speed = 2 + Math.random() * 4;
+        S.particles.push({
+            x: cx, y: cy,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 2,
+            life: 1,
+            decay: 0.015 + Math.random() * 0.02,
+            size: 3 + Math.random() * 4,
+            hue: S.themeHue + Math.random() * 40 - 20
+        });
+    }
+}
 
-        .shutter-btn {
-            width: 76px;
-            height: 76px;
-            border-radius: 50%;
-            border: 4px solid #fff;
-            background: transparent;
-            cursor: pointer;
-            position: relative;
-            transition: all 0.2s ease;
-            padding: 0;
-        }
+function updateParticles() {
+    partCtx.clearRect(0, 0, partCanvas.width, partCanvas.height);
+    for (let i = S.particles.length - 1; i >= 0; i--) {
+        const p = S.particles[i];
+        p.x += p.vx; p.y += p.vy;
+        p.vy += 0.1; // gravity
+        p.vx *= 0.98;
+        p.life -= p.decay;
+        if (p.life <= 0) { S.particles.splice(i, 1); continue; }
+        partCtx.globalAlpha = p.life;
+        partCtx.fillStyle = `hsl(${p.hue}, 80%, 65%)`;
+        partCtx.beginPath();
+        partCtx.arc(p.x, p.y, p.size * p.life, 0, Math.PI * 2);
+        partCtx.fill();
+    }
+    partCtx.globalAlpha = 1;
+}
 
-        .shutter-btn:active {
-            transform: scale(0.92);
-        }
+// ── Ambient Floating Dots ─────────────────────
+function spawnAmbientDots() {
+    for (let i = 0; i < 12; i++) {
+        const dot = document.createElement('div');
+        dot.className = 'ambient-dot';
+        dot.style.left = Math.random() * 100 + '%';
+        dot.style.animationDuration = (6 + Math.random() * 8) + 's';
+        dot.style.animationDelay = Math.random() * 8 + 's';
+        document.body.appendChild(dot);
+    }
+}
 
-        .shutter-inner {
-            width: 100%;
-            height: 100%;
-            border-radius: 50%;
-            background: rgba(255,255,255,0.9);
-            transition: all 0.15s ease;
-        }
+// ── Clock ─────────────────────────────────────
+function updateClock() {
+    const d = new Date();
+    $('clock').textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+setInterval(updateClock, 1000); updateClock();
 
-        .shutter-btn:active .shutter-inner {
-            transform: scale(0.85);
-            background: #fff;
-        }
+// ── Music Progress Sim ────────────────────────
+setInterval(() => {
+    if (S.playing) {
+        S.musicProgress = (S.musicProgress + 0.3) % 100;
+        const fill = $('musicFill');
+        if (fill) fill.style.width = S.musicProgress + '%';
+    }
+}, 300);
 
-        .shutter-btn.recording {
-            border-color: #ef4444;
-        }
+// ── Toast ─────────────────────────────────────
+function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(S.toastTimer);
+    S.toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
+}
 
-        .shutter-btn.recording .shutter-inner {
-            background: #ef4444;
-            border-radius: 8px;
-            width: 32px;
-            height: 32px;
-            margin: auto;
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-        }
+// ── Main Loop ─────────────────────────────────
+function mainLoop(ts) {
+    // Run hand detection every 2nd frame for performance
+    S.detectTick++;
+    if (!S.touchMode && S.detectTick % 2 === 0) {
+        detectHand();
+    }
 
-        /* Recording ring animation */
-        .record-ring {
-            position: absolute;
-            top: -6px;
-            left: -6px;
-            width: 88px;
-            height: 88px;
-            border-radius: 50%;
-            border: 3px solid transparent;
-            border-top-color: #ef4444;
-            animation: spin 1s linear infinite;
-            display: none;
-        }
+    if (S.handDetected && !S.touchMode) {
+        updateCursorPos();
+        hitTest();
+    }
 
-        .shutter-btn.recording + .record-ring {
-            display: block;
-        }
+    updateParticles();
 
-        @keyframes spin {
-            to { transform: rotate(360deg); }
-        }
-
-        /* Mode tabs */
-        .mode-tabs {
-            position: absolute;
-            bottom: 125px;
-            left: 50%;
-            transform: translateX(-50%);
-            display: flex;
-            gap: 20px;
-            z-index: 10;
-        }
-
-        .mode-tab {
-            font-size: 13px;
-            font-weight: 600;
-            color: rgba(255,255,255,0.5);
-            background: none;
-            border: none;
-            cursor: pointer;
-            padding: 4px 0;
-            transition: all 0.3s ease;
-            position: relative;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .mode-tab.active {
-            color: #fff;
-        }
-
-        .mode-tab.active::after {
-            content: '';
-            position: absolute;
-            bottom: -2px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: 5px;
-            height: 5px;
-            background: #fff;
-            border-radius: 50%;
-        }
-
-        /* Face mesh overlay */
-        .face-mesh-point {
-            position: absolute;
-            width: 4px;
-            height: 4px;
-            background: rgba(100, 200, 255, 0.6);
-            border-radius: 50%;
-            pointer-events: none;
-        }
-
-        /* AR Object Container */
-        .ar-object {
-            position: absolute;
-            pointer-events: none;
-            z-index: 4;
-            transition: all 0.1s ease;
-        }
-
-        /* Scan lines effect */
-        .scan-lines {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            z-index: 3;
-            pointer-events: none;
-            opacity: 0;
-            transition: opacity 0.3s ease;
-        }
-
-        .scan-lines.active {
-            opacity: 1;
-        }
-
-        .scan-line {
-            position: absolute;
-            left: 0;
-            right: 0;
-            height: 2px;
-            background: linear-gradient(90deg, transparent, rgba(100,200,255,0.4), transparent);
-            animation: scanMove 3s linear infinite;
-        }
-
-        @keyframes scanMove {
-            0% { top: -2px; }
-            100% { top: 100%; }
-        }
-
-        /* Corner brackets for face detection */
-        .face-bracket {
-            position: absolute;
-            z-index: 5;
-            pointer-events: none;
-            opacity: 0;
-            transition: opacity 0.3s ease, transform 0.3s ease;
-        }
-
-        .face-bracket.visible {
-            opacity: 1;
-        }
-
-        .face-bracket-corner {
-            position: absolute;
-            width: 24px;
-            height: 24px;
-            border-color: rgba(100, 220, 255, 0.8);
-            border-style: solid;
-            border-width: 0;
-        }
-
-        .face-bracket-corner.tl { top: 0; left: 0; border-top-width: 3px; border-left-width: 3px; border-radius: 4px 0 0 0; }
-        .face-bracket-corner.tr { top: 0; right: 0; border-top-width: 3px; border-right-width: 3px; border-radius: 0 4px 0 0; }
-        .face-bracket-corner.bl { bottom: 0; left: 0; border-bottom-width: 3px; border-left-width: 3px; border-radius: 0 0 0 4px; }
-        .face-bracket-corner.br { bottom: 0; right: 0; border-bottom-width: 3px; border-right-width: 3px; border-radius: 0 0 4px 0; }
-
-        /* Side Panel */
-        .side-panel {
-            position: absolute;
-            right: 12px;
-            top: 50%;
-            transform: translateY(-50%);
-            display: flex;
-            flex-direction: column;
-            gap: 16px;
-            z-index: 10;
-        }
-
-        .side-btn {
-            width: 44px;
-            height: 44px;
-            border: none;
-            background: rgba(255,255,255,0.12);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            border-radius: 14px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: all 0.2s ease;
-            color: #fff;
-            gap: 2px;
-        }
-
-        .side-btn:active {
-            transform: scale(0.9);
-            background: rgba(255,255,255,0.3);
-        }
-
-        .side-btn.active {
-            background: rgba(255,255,255,0.3);
-        }
-
-        .side-btn svg {
-            width: 20px;
-            height: 20px;
-            fill: none;
-            stroke: #fff;
-            stroke-width: 2;
-            stroke-linecap: round;
-            stroke-linejoin: round;
-        }
-
-        .side-btn-label {
-            font-size: 7px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.3px;
-        }
-
-        /* Toast notification */
-        .toast {
-            position: absolute;
-            top: 100px;
-            left: 50%;
-            transform: translateX(-50%) translateY(-20px);
-            background: rgba(0,0,0,0.7);
-            backdrop-filter: blur(20px);
-            -webkit-backdrop-filter: blur(20px);
-            color: #fff;
-            padding: 10px 20px;
-            border-radius: 20px;
-            font-size: 14px;
-            font-weight: 500;
-            z-index: 100;
-            opacity: 0;
-            transition: all 0.3s ease;
-            pointer-events: none;
-            white-space: nowrap;
-        }
-
-        .toast.show {
-            opacity: 1;
-            transform: translateX(-50%) translateY(0);
-        }
-
-        /* Flash effect */
-        .flash-overlay {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            background: #fff;
-            z-index: 50;
-            opacity: 0;
-            pointer-events: none;
-            transition: opacity 0.1s ease;
-        }
-
-        .flash-overlay.flash {
-            opacity: 1;
-        }
-
-        /* Permission screen */
-        .permission-screen {
-            position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
-            bottom: 0;
-            z-index: 200;
-            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 50%, #0f0f23 100%);
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            padding: 40px;
-            text-align: center;
-        }
-
-        .permission-screen.hidden {
-            display: none;
-        }
-
-        .permission-icon {
-            width: 100px;
-            height: 100px;
-            background: linear-gradient(135deg, #6366f1, #a855f7);
-            border-radius: 30px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            margin-bottom: 30px;
-            box-shadow: 0 20px 60px rgba(99, 102, 241, 0.3);
-        }
-
-        .permission-icon svg {
-            width: 50px;
-            height: 50px;
-            fill: none;
-            stroke: #fff;
-            stroke-width: 2;
-            stroke-linecap: round;
-            stroke-linejoin: round;
-        }
-
-        .permission-screen h2 {
-            color: #fff;
-            font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 12px;
-        }
-
-        .permission-screen p {
-            color: rgba(255,255,255,0.6);
-            font-size: 15px;
-            line-height: 1.5;
-            margin-bottom: 40px;
-        }
-
+    requestAnimationFrame(mainLoop);
+}
+</script>
+</body>
+</html>
         .permission-btn {
             background: linear-gradient(135deg, #6366f1, #a855f7);
             color: #fff;
