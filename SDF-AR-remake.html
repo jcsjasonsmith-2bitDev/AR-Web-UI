@@ -1,0 +1,851 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>SDF Hand — MVP</title>
+<style
+>
+  :root {
+    --bg: #070b10;
+    --panel: rgba(14, 20, 28, 0.86);
+    --panel-solid: #0e141c;
+    --line: rgba(148, 176, 200, 0.16);
+    --text: #e8eef4;
+    --muted: #8b9aab;
+    --cyan: #45e0d0;
+    --cyan-dim: rgba(69, 224, 208, 0.14);
+    --amber: #f2c96d;
+    --danger: #ff7b72;
+    --ok: #6bcb77;
+    --r: 16px;
+    --font: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; }
+  button { font: inherit; cursor: pointer; border: 0; color: inherit; background: none; }
+  button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  /* ── Stage: camera + overlay ─────────────────────────── */
+  #stage {
+    position: fixed; inset: 0; background: #05080c;
+    display: grid; place-items: center;
+  }
+  #cam {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; opacity: 0; transition: opacity .5s ease;
+    background: #05080c;
+  }
+  #cam.live { opacity: 1; }
+  #fx { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  #vignette {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 55%, rgba(0,0,0,.45) 100%);
+  }
+
+  /* fingertip reticle (DOM — crisp, always on top of video) */
+  #reticle {
+    position: fixed; width: 36px; height: 36px; margin: -18px 0 0 -18px;
+    left: 50%; top: 50%; pointer-events: none; z-index: 40;
+    opacity: 0; transform: scale(.6); transition: opacity .2s, transform .15s;
+    will-change: left, top;
+  }
+  #reticle.on { opacity: 1; transform: scale(1); }
+  #reticle.pressing { transform: scale(.85); }
+  #reticle svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+  /* ── Chrome (status, nav) ────────────────────────────── */
+  #status {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    z-index: 50; display: flex; gap: 8px; align-items: center;
+    padding: 8px 14px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(12px); font-size: 13px; letter-spacing: .02em;
+    opacity: 0; transition: opacity .35s; pointer-events: none;
+  }
+  #status.show { opacity: 1; }
+  #status .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--muted); box-shadow: 0 0 0 0 transparent;
+  }
+  #status.locked .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  #status.searching .dot { background: var(--amber); animation: pulse 1.2s ease infinite; }
+  #status.err .dot { background: var(--danger); }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  #toolbar {
+    position: fixed; right: 14px; top: 14px; z-index: 50;
+    display: flex; gap: 8px; opacity: 0; transition: opacity .35s;
+    pointer-events: none;
+  }
+  #toolbar.show { opacity: 1; pointer-events: auto; }
+  .icon-btn {
+    width: 40px; height: 40px; border-radius: 12px;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(12px); display: grid; place-items: center;
+    font-size: 16px; transition: background .15s, border-color .15s;
+  }
+  .icon-btn:hover { background: rgba(40, 56, 72, .9); border-color: rgba(69,224,208,.35); }
+  .icon-btn.active { border-color: var(--cyan); color: var(--cyan); }
+
+  /* ── Modal / onboarding shell ────────────────────────── */
+  #modal {
+    position: fixed; inset: 0; z-index: 60;
+    display: grid; place-items: center; padding: 24px;
+    background: rgba(4, 7, 11, .62); backdrop-filter: blur(8px);
+    transition: opacity .3s; 
+  }
+  #modal.hidden { opacity: 0; pointer-events: none; }
+  .card {
+    width: min(440px, 100%); border-radius: calc(var(--r) + 6px);
+    background: var(--panel-solid); border: 1px solid var(--line);
+    padding: 28px 26px 24px; box-shadow: 0 24px 80px rgba(0,0,0,.55);
+    position: relative; overflow: hidden;
+  }
+  .card::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+    background: linear-gradient(90deg, var(--cyan), var(--amber));
+    opacity: .85;
+  }
+  .step-dots { display: flex; gap: 6px; margin-bottom: 18px; }
+  .step-dots span {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: rgba(148,176,200,.25); transition: background .2s, transform .2s;
+  }
+  .step-dots span.on { background: var(--cyan); transform: scale(1.25); }
+  .eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--cyan); margin-bottom: 10px;
+  }
+  .card h1 { font-size: 26px; line-height: 1.2; font-weight: 650; letter-spacing: -0.02em; margin-bottom: 10px; }
+  .card p { color: var(--muted); font-size: 14.5px; line-height: 1.55; margin-bottom: 8px; }
+  .card p strong { color: var(--text); font-weight: 600; }
+  .card .hint { font-size: 12.5px; color: var(--muted); opacity: .85; margin-top: 4px; }
+  .actions { display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
+  .btn {
+    padding: 12px 20px; border-radius: 12px; font-weight: 600; font-size: 14.5px;
+    transition: transform .12s, background .15s, opacity .15s;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn-primary { background: var(--cyan); color: #04221e; flex: 1; text-align: center; }
+  .btn-primary:hover { filter: brightness(1.06); }
+  .btn-primary:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+  .btn-ghost { background: transparent; border: 1px solid var(--line); color: var(--muted); }
+  .btn-ghost:hover { color: var(--text); border-color: rgba(148,176,200,.4); }
+
+  /* find-hand ring */
+  .ring-wrap { display: grid; place-items: center; padding: 18px 0 8px; }
+  .ring {
+    width: 120px; height: 120px; border-radius: 50%;
+    display: grid; place-items: center; position: relative;
+    background: conic-gradient(var(--cyan) calc(var(--p, 0) * 1%), rgba(69,224,208,.12) 0);
+    transition: --p .2s linear;
+  }
+  .ring::before {
+    content: ""; position: absolute; inset: 8px; border-radius: 50%;
+    background: var(--panel-solid);
+  }
+  .ring .pct {
+    position: relative; z-index: 1; font-size: 22px; font-weight: 700;
+    font-variant-numeric: tabular-nums; color: var(--cyan);
+  }
+  .ring .pct.idle { color: var(--muted); font-size: 13px; font-weight: 500; letter-spacing: .06em; text-transform: uppercase; }
+
+  /* tutorial target */
+  #target {
+    position: fixed; z-index: 55; width: 72px; height: 72px; margin: -36px 0 0 -36px;
+    border-radius: 50%; border: 2px dashed rgba(242, 201, 109, .85);
+    box-shadow: 0 0 0 6px rgba(242, 201, 109, .12), inset 0 0 20px rgba(242,201,109,.15);
+    opacity: 0; pointer-events: none; transition: opacity .25s;
+    display: grid; place-items: center;
+  }
+  #target.show { opacity: 1; animation: breathe 1.6s ease infinite; }
+  #target.locked { border-style: solid; border-color: var(--ok); box-shadow: 0 0 0 6px rgba(107,203,119,.18); animation: none; }
+  #target span { font-size: 11px; font-weight: 700; letter-spacing: .1em; color: var(--amber); text-transform: uppercase; }
+  #target.locked span { color: var(--ok); }
+  @keyframes breathe { 50% { transform: scale(1.06); } }
+
+  /* main HUD cards (post-onboarding playground) */
+  #play {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+    opacity: 0; transform: translateY(12px); transition: opacity .4s, transform .4s;
+    pointer-events: none;
+  }
+  #play.show { opacity: 1; transform: none; pointer-events: auto; }
+  .chip {
+    padding: 11px 16px; border-radius: 14px; font-size: 13.5px; font-weight: 600;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(12px); transition: border-color .15s, background .15s, transform .1s;
+    user-select: none;
+  }
+  .chip:hover { border-color: rgba(69,224,208,.5); }
+  .chip.hit { background: var(--cyan-dim); border-color: var(--cyan); transform: scale(.97); color: var(--cyan); }
+  .chip small { display: block; font-weight: 500; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .chip.hit small { color: rgba(69,224,208,.7); }
+
+  #toast {
+    position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%) translateY(8px);
+    z-index: 58; padding: 10px 16px; border-radius: 12px;
+    background: var(--panel-solid); border: 1px solid var(--line);
+    font-size: 13px; opacity: 0; transition: opacity .25s, transform .25s;
+    pointer-events: none; white-space: nowrap; max-width: 90vw;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  .kbd {
+    display: inline-block; padding: 1px 6px; border-radius: 5px;
+    background: rgba(148,176,200,.12); border: 1px solid var(--line);
+    font-size: 12px; font-family: ui-monospace, monospace;
+  }
+  .err { color: var(--danger) !important; }
+
+  @media (max-width: 520px) {
+    .card { padding: 22px 18px; }
+    .card h1 { font-size: 22px; }
+    #play { flex-direction: column; align-items: stretch; }
+    .chip { text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ═══ Stage ═══ -->
+<div id="stage">
+  <video id="cam" playsinline muted autoplay></video>
+  <canvas id="fx"></canvas>
+  <div id="vignette"></div>
+</div>
+
+<!-- fingertip reticle -->
+<div id="reticle" aria-hidden="true">
+  <svg viewBox="0 0 36 36" fill="none">
+    <circle cx="18" cy="18" r="16" stroke="rgba(69,224,208,.35)" stroke-width="1.5"/>
+    <circle cx="18" cy="18" r="10" stroke="#45e0d0" stroke-width="1.75"/>
+    <circle cx="18" cy="18" r="2.5" fill="#45e0d0"/>
+    <path d="M18 0v6M18 30v6M0 18h6M30 18h6" stroke="#45e0d0" stroke-width="1.5" stroke-linecap="round"/>
+  </svg>
+</div>
+
+<!-- tutorial target -->
+<div id="target"><span>hold</span></div>
+
+<!-- status pill -->
+<div id="status" class="searching">
+  <span class="dot"></span>
+  <span id="statusText">starting…</span>
+</div>
+
+<!-- toolbar -->
+<div id="toolbar">
+  <button class="icon-btn active" id="btnMirror" title="Mirror view" aria-label="Toggle mirror">⇄</button>
+  <button class="icon-btn" id="btnRedo" title="Replay onboarding" aria-label="Replay onboarding">↺</button>
+  <button class="icon-btn" id="btnCamOff" title="Stop camera" aria-label="Stop camera">⏻</button>
+</div>
+
+<!-- playground -->
+<div id="play">
+  <button class="chip" data-msg="Nice pinch! Buttons work.">Pinch to tap<small>thumb + index</small></button>
+  <button class="chip" data-msg="Reticle follows your index fingertip.">Point to move<small>index tip drives cursor</small></button>
+  <button class="chip" data-msg="Skeleton stays wrist→fingers — no flipping.">Rig is locked<small>21 nodes, stable axis</small></button>
+</div>
+
+<div id="toast"></div>
+
+<!-- ═══ Onboarding modal ═══ -->
+<div id="modal">
+  <div class="card" role="dialog" aria-modal="true" aria-labelledby="cardTitle">
+    <div class="step-dots" id="dots" aria-hidden="true"></div>
+    <div id="stepBody"><!-- filled by JS --></div>
+  </div>
+</div>
+
+<!-- ═══ MediaPipe (CDN — needs network on first load) ═══ -->
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+
+<script>
+/* ═══════════════════════════════════════════════════════════
+   SDF Hand MVP — single-file, reliability-first rewrite
+   ─────────────────────────────────────────────────────────
+   Pipeline:  camera → MediaPipe Hands (21 landmarks, one hand)
+              → screen-space mapper (cover + optional mirror)
+              → EMA pointer + pinch click
+              → canvas rig + DOM reticle
+   Onboarding: intro → camera → find hand → aim tutorial → live
+   ═══════════════════════════════════════════════════════════ */
+(function () {
+  "use strict";
+
+  /* ── 1 · Config ─────────────────────────────────────── */
+  const CFG = {
+    ema: 0.38,              // pointer smoothing (higher = snappier)
+    pinchOn: 0.42,          // pinch ratio to press   (dist / handSize)
+    pinchOff: 0.58,         // release hysteresis
+    holdFindMs: 900,        // continuous hand presence to pass "find hand"
+    holdAimMs: 700,         // time on target to pass aim tutorial
+    loseHandMs: 400,        // grace before "searching"
+    mirrorDefault: true,    // selfie mirror for cameras
+    bones: [
+      [0,1],[1,2],[2,3],[3,4],          // thumb
+      [0,5],[5,6],[6,7],[7,8],          // index
+      [5,9],[9,10],[10,11],[11,12],     // middle
+      [9,13],[13,14],[14,15],[15,16],   // ring
+      [13,17],[17,18],[18,19],[19,20],  // pinky
+      [0,17]                            // palm edge
+    ],
+    // finger tips / mcp for glow accents
+    tips: [4, 8, 12, 16, 20]
+  };
+
+  /* ── 2 · DOM ────────────────────────────────────────── */
+  const $ = (id) => document.getElementById(id);
+  const video = $("cam"), fx = $("fx"), reticle = $("reticle");
+  const statusEl = $("status"), statusText = $("statusText");
+  const modal = $("modal"), stepBody = $("stepBody"), dots = $("dots");
+  const targetEl = $("target"), toastEl = $("toast"), playBar = $("play");
+  const btnMirror = $("btnMirror"), btnRedo = $("btnRedo"), btnCamOff = $("btnCamOff");
+  const ctx = fx.getContext("2d", { alpha: true });
+
+  /* ── 3 · State ──────────────────────────────────────── */
+  const S = {
+    phase: "intro",          // intro | camera | find | aim | live | cam-error | no-model
+    mirror: CFG.mirrorDefault,
+    camOn: false,
+    stream: null,
+    hand: null,              // last landmarks (21 × {x,y,z}) or null
+    handAt: 0,               // performance.now() of last detection
+    handedLabel: "",
+    // pointer
+    ptr: { x: 0.5, y: 0.5, has: false },
+    ptrRaw: null,            // unmapped target before EMA
+    pressing: false,
+    // onboarding progress
+    findAcc: 0,              // 0..1 continuous presence
+    aimAcc: 0,
+    targetPos: { x: 0.5, y: 0.45 },
+    // loop
+    lastT: 0,
+    sendBusy: false,
+    modelOk: false,
+    toastT: 0
+  };
+
+  /* ── 4 · Utils ──────────────────────────────────────── */
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  function toast(msg, ms) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(S.toastT);
+    S.toastT = setTimeout(() => toastEl.classList.remove("show"), ms || 2200);
+  }
+
+  function setStatus(mode, text) {
+    statusEl.className = "show " + mode;
+    statusText.textContent = text;
+  }
+
+  /* Cover-fit mapping: video (vw,vh) → canvas (cw,ch), same as object-fit:cover */
+  function viewXform() {
+    const cw = fx.width, ch = fx.height;
+    const vw = video.videoWidth || 16, vh = video.videoHeight || 9;
+    const scale = Math.max(cw / vw, ch / vh);
+    const dw = vw * scale, dh = vh * scale;
+    return { ox: (cw - dw) / 2, oy: (ch - dh) / 2, dw, dh, cw, ch };
+  }
+
+  /** MediaPipe normalized lm → canvas px (with mirror applied if on) */
+  function lmToCanvas(lm, T) {
+    const nx = S.mirror ? (1 - lm.x) : lm.x;
+    return { x: T.ox + nx * T.dw, y: T.oy + lm.y * T.dh };
+  }
+
+  /** canvas px → viewport CSS px (reticle) */
+  function canvasToViewport(p) {
+    const r = fx.getBoundingClientRect();
+    return { x: r.left + (p.x / fx.width) * r.width, y: r.top + (p.y / fx.height) * r.height };
+  }
+
+  function dist2(a, b) { const dx = a.x - b.x, dy = a.y - b.y; return dx * dx + dy * dy; }
+
+  /* ── 5 · Camera ─────────────────────────────────────── */
+  async function startCamera() {
+    if (S.camOn) return true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
+        audio: false
+      });
+      S.stream = stream;
+      video.srcObject = stream;
+      await video.play();
+      video.classList.add("live");
+      S.camOn = true;
+      btnCamOff.classList.remove("active");
+      return true;
+    } catch (e) {
+      console.error(e);
+      S.camOn = false;
+      return false;
+    }
+  }
+
+  function stopCamera() {
+    if (S.stream) S.stream.getTracks().forEach(t => t.stop());
+    S.stream = null;
+    video.srcObject = null;
+    video.classList.remove("live");
+    S.camOn = false;
+    S.hand = null;
+    btnCamOff.classList.add("active");
+    reticle.classList.remove("on");
+    setStatus("err", "camera off");
+  }
+
+  /* ── 6 · Hand tracking (MediaPipe) ──────────────────── */
+  let hands = null;
+
+  function initModel() {
+    if (typeof Hands === "undefined") {
+      S.modelOk = false;
+      return false;
+    }
+    hands = new Hands({
+      locateFile: (f) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/" + f
+    });
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.65,
+      minTrackingConfidence: 0.55,
+      selfieMode: false          // we control mirroring ourselves
+    });
+    hands.onResults(onHands);
+    S.modelOk = true;
+    return true;
+  }
+
+  function onHands(results) {
+    const now = performance.now();
+    const lm = results.multiHandLandmarks && results.multiHandLandmarks[0];
+    if (lm && lm.length === 21) {
+      S.hand = lm;
+      S.handAt = now;
+      const hd = results.multiHandedness && results.multiHandedness[0];
+      S.handedLabel = hd && hd.label ? hd.label : "";
+    }
+    /* on miss: keep last hand until loseHandMs — then clear (no ghost face lock) */
+    if (!lm && now - S.handAt > CFG.loseHandMs) {
+      S.hand = null;
+    }
+  }
+
+  /* ── 7 · Pinch + pointer ────────────────────────────── */
+  function handMetrics(lm) {
+    // hand size ≈ wrist(0) → middle MCP(9); pinch = thumb tip(4) ↔ index tip(8)
+    const size = Math.max(1e-6, Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y));
+    const pinch = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / size;
+    return { size, pinch, tip: lm[8], middle: lm[9], wrist: lm[0] };
+  }
+
+  function updatePointer(dt) {
+    const live = S.hand && (performance.now() - S.handAt < CFG.loseHandMs);
+    if (!live) {
+      // hold last reticle position, hide after a beat — never chase a face
+      if (performance.now() - S.handAt > CFG.loseHandMs + 400) {
+        reticle.classList.remove("on");
+        if (S.phase === "live") setStatus("searching", "show one hand");
+      }
+      S.pressing = false;
+      reticle.classList.remove("pressing");
+      return;
+    }
+
+    const m = handMetrics(S.hand);
+    const T = viewXform();
+    const tipPx = lmToCanvas(m.tip, T);
+
+    // EMA in canvas-normalized space for stability
+    const nx = tipPx.x / T.cw, ny = tipPx.y / T.ch;
+    if (!S.ptr.has) { S.ptr.x = nx; S.ptr.y = ny; S.ptr.has = true; }
+    else {
+      // adaptive: faster when far (catch-up), slower when near (calm)
+      const d = Math.hypot(nx - S.ptr.x, ny - S.ptr.y);
+      const a = clamp(CFG.ema + d * 0.5, CFG.ema, 0.65);
+      S.ptr.x = lerp(S.ptr.x, nx, a);
+      S.ptr.y = lerp(S.ptr.y, ny, a);
+    }
+
+    // reticle position in viewport (soft-clamped on-screen)
+    const vp = canvasToViewport({ x: S.ptr.x * T.cw, y: S.ptr.y * T.ch });
+    const mx = 20, my = 20;
+    reticle.style.left = clamp(vp.x, mx, innerWidth - mx) + "px";
+    reticle.style.top = clamp(vp.y, my, innerHeight - my) + "px";
+    reticle.classList.add("on");
+
+    // pinch with hysteresis
+    if (!S.pressing && m.pinch < CFG.pinchOn) S.pressing = true;
+    else if (S.pressing && m.pinch > CFG.pinchOff) S.pressing = false;
+    reticle.classList.toggle("pressing", S.pressing);
+
+    if (S.phase === "live") setStatus("locked", (S.handedLabel ? S.handedLabel + " · " : "") + (S.pressing ? "pinch" : "hand locked"));
+  }
+
+  /* ── 8 · Overlay renderer ───────────────────────────── */
+  function resizeCanvas() {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
+    if (fx.width !== w || fx.height !== h) { fx.width = w; fx.height = h; }
+  }
+
+  function drawFrame() {
+    resizeCanvas();
+    ctx.clearRect(0, 0, fx.width, fx.height);
+    if (!S.hand) return;
+
+    const T = viewXform();
+    const pts = S.hand.map(lm => lmToCanvas(lm, T));
+
+    // ── palm fill ──
+    ctx.beginPath();
+    const palmIdx = [0, 1, 5, 9, 13, 17];
+    palmIdx.forEach((i, k) => {
+      const p = pts[i];
+      k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = "rgba(69, 224, 208, 0.10)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(69, 224, 208, 0.28)";
+    ctx.lineWidth = 1.5 * (fx.width / innerWidth);
+    ctx.stroke();
+
+    // ── bones ──
+    const lw = 2.5 * (fx.width / innerWidth);
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (const [a, b] of CFG.bones) {
+      const p = pts[a], q = pts[b];
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(q.x, q.y);
+      ctx.strokeStyle = "rgba(69, 224, 208, 0.92)";
+      ctx.lineWidth = lw;
+      ctx.stroke();
+    }
+
+    // ── joints ──
+    const jr = 3.5 * (fx.width / innerWidth);
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      const isTip = CFG.tips.indexOf(i) >= 0;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, isTip ? jr * 1.35 : (i === 0 ? jr * 1.5 : jr), 0, Math.PI * 2);
+      ctx.fillStyle = i === 0 ? "#f2c96d" : isTip ? "#bffff7" : "#45e0d0";
+      ctx.fill();
+    }
+
+    // ── index-tip emphasis (pointer anchor) ──
+    const tip = pts[8];
+    ctx.beginPath();
+    ctx.arc(tip.x, tip.y, jr * 2.2, 0, Math.PI * 2);
+    ctx.strokeStyle = S.pressing ? "#f2c96d" : "rgba(69,224,208,.7)";
+    ctx.lineWidth = 2 * (fx.width / innerWidth);
+    ctx.stroke();
+  }
+
+  /* ── 9 · Onboarding ─────────────────────────────────── */
+  const STEPS = ["intro", "camera", "find", "aim", "live"];
+
+  function setStep(phase) {
+    S.phase = phase;
+    const live = phase === "live";
+    modal.classList.toggle("hidden", live);
+    playBar.classList.toggle("show", live);
+    $("toolbar").classList.toggle("show", live);
+    targetEl.classList.remove("show", "locked");
+    if (!live) {
+      statusEl.classList.remove("show");
+      // progress dots: intro → camera → find → aim → (live)
+      const idx = Math.max(0, STEPS.indexOf(phase));
+      dots.innerHTML = "";
+      STEPS.forEach((_, i) => {
+        const s = document.createElement("span");
+        if (i <= idx) s.className = "on";
+        dots.appendChild(s);
+      });
+      renderStep();
+    } else {
+      setStatus("searching", "show one hand");
+      toast("Point to move · pinch to tap", 3200);
+    }
+  }
+
+  function renderStep() {
+    const p = S.phase;
+    if (p === "intro") {
+      stepBody.innerHTML = `
+        <div class="eyebrow">SDF Hand · MVP</div>
+        <h1 id="cardTitle">Control the screen with your hand</h1>
+        <p>A rebuilt, reliability-first tracker: one hand, 21-node rig, stable orientation, fingertip cursor.</p>
+        <p class="hint">Works best in a well-lit room. Camera frames never leave this device.</p>
+        <div class="actions">
+          <button class="btn btn-primary" id="go1">Get started</button>
+        </div>`;
+      $("go1").onclick = () => setStep("camera");
+    }
+    else if (p === "camera") {
+      stepBody.innerHTML = `
+        <div class="eyebrow">Step 1 · Camera</div>
+        <h1 id="cardTitle">Allow camera access</h1>
+        <p>We need the camera to see your hand. <strong>Nothing is uploaded.</strong></p>
+        <p class="hint" id="camHint">Next we’ll lock onto your hand, then teach the pointer.</p>
+        <div class="actions">
+          <button class="btn btn-primary" id="goCam">Enable camera</button>
+          <button class="btn btn-ghost" id="back1">Back</button>
+        </div>`;
+      $("back1").onclick = () => setStep("intro");
+      $("goCam").onclick = async () => {
+        const btn = $("goCam");
+        btn.disabled = true;
+        btn.textContent = "Requesting…";
+        const ok = await startCamera();
+        if (!ok) {
+          btn.disabled = false;
+          btn.textContent = "Try again";
+          $("camHint").className = "hint err";
+          $("camHint").textContent = navigator.mediaDevices
+            ? "Camera blocked — allow it in the address bar, then try again."
+            : "This browser doesn’t expose the camera (needs https:// or localhost).";
+          return;
+        }
+        // model check
+        if (!S.modelOk && !initModel()) {
+          btn.disabled = false;
+          btn.textContent = "Enable camera";
+          $("camHint").className = "hint err";
+          $("camHint").textContent = "Hand model didn’t load — check your internet connection once, then reload.";
+          return;
+        }
+        setStep("find");
+      };
+    }
+    else if (p === "find") {
+      stepBody.innerHTML = `
+        <div class="eyebrow">Step 2 · Detect</div>
+        <h1 id="cardTitle">Show one hand</h1>
+        <p>Hold your hand up, palm toward the camera. Keep it in frame until the ring fills.</p>
+        <div class="ring-wrap">
+          <div class="ring" id="ring" style="--p:0">
+            <span class="pct idle" id="ringPct">waiting</span>
+          </div>
+        </div>
+        <div class="actions">
+          <button class="btn btn-ghost" id="back2">Back</button>
+        </div>`;
+      $("back2").onclick = () => setStep("camera");
+      S.findAcc = 0;
+    }
+    else if (p === "aim") {
+      // place target in upper third, away from HUD
+      S.targetPos = { x: 0.5 + (Math.random() * 0.2 - 0.1), y: 0.38 };
+      S.aimAcc = 0;
+      targetEl.style.left = (S.targetPos.x * 100) + "%";
+      targetEl.style.top = (S.targetPos.y * 100) + "%";
+      targetEl.classList.add("show");
+      targetEl.classList.remove("locked");
+      targetEl.querySelector("span").textContent = "hold";
+      stepBody.innerHTML = `
+        <div class="eyebrow">Step 3 · Aim</div>
+        <h1 id="cardTitle">Move the ring to the target</h1>
+        <p>Point with your <strong>index finger</strong> — put the crosshair inside the gold circle and hold.</p>
+        <div class="actions">
+          <button class="btn btn-ghost" id="back3">Back</button>
+          <button class="btn btn-ghost" id="skipAim">Skip</button>
+        </div>`;
+      $("back3").onclick = () => setStep("find");
+      $("skipAim").onclick = () => finishOnboarding();
+    }
+  }
+
+  function finishOnboarding() {
+    targetEl.classList.remove("show", "locked");
+    setStep("live");
+  }
+
+  /* onboarding progress ticks (called from rAF) */
+  function tickOnboarding(dt) {
+    if (S.phase === "find") {
+      const live = S.hand && (performance.now() - S.handAt < CFG.loseHandMs);
+      S.findAcc = clamp(S.findAcc + (live ? dt / CFG.holdFindMs : -dt / 0.35), 0, 1);
+      const ring = $("ring"), pct = $("ringPct");
+      if (ring) {
+        ring.style.setProperty("--p", (S.findAcc * 100).toFixed(1));
+        if (pct) {
+          if (live || S.findAcc > 0) {
+            pct.className = "pct";
+            pct.textContent = Math.round(S.findAcc * 100) + "%";
+          }
+        }
+      }
+      if (S.findAcc >= 1) setStep("aim");
+    }
+    else if (S.phase === "aim") {
+      if (S.ptr.has && S.hand) {
+        const vp = canvasToViewport({ x: S.ptr.x * fx.width, y: S.ptr.y * fx.height });
+        const tx = S.targetPos.x * innerWidth, ty = S.targetPos.y * innerHeight;
+        const d = Math.hypot(vp.x - tx, vp.y - ty);
+        const onTarget = d < 44;
+        S.aimAcc = clamp(S.aimAcc + (onTarget ? dt / CFG.holdAimMs : -dt / 0.25), 0, 1);
+        targetEl.classList.toggle("locked", onTarget);
+        targetEl.querySelector("span").textContent = onTarget
+          ? Math.round(S.aimAcc * 100) + "%"
+          : "hold";
+        if (S.aimAcc >= 1) finishOnboarding();
+      } else {
+        S.aimAcc = clamp(S.aimAcc - dt / 0.4, 0, 1);
+      }
+    }
+  }
+
+  /* ── 10 · Playground pinch clicks ───────────────────── */
+  let pressEdge = false;
+  function tickPlay() {
+    if (S.phase !== "live") { pressEdge = false; return; }
+    const was = pressEdge;
+    pressEdge = S.pressing;
+    if (!was && pressEdge) {
+      // hit-test chips under reticle
+      const el = document.elementFromPoint(
+        clamp(parseFloat(reticle.style.left) || innerWidth / 2, 0, innerWidth),
+        clamp(parseFloat(reticle.style.top) || innerHeight / 2, 0, innerHeight)
+      );
+      const chip = el && el.closest ? el.closest(".chip") : null;
+      if (chip) {
+        chip.classList.add("hit");
+        setTimeout(() => chip.classList.remove("hit"), 350);
+        toast(chip.dataset.msg || "✓");
+        Sound.click();
+      } else {
+        Sound.tick();
+      }
+    }
+  }
+
+  /* tiny feedback beeps (no assets) */
+  const Sound = (() => {
+    let ac = null;
+    function ctxA() {
+      if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+      return ac;
+    }
+    function blip(freq, dur, gain) {
+      try {
+        const a = ctxA();
+        const o = a.createOscillator(), g = a.createGain();
+        o.type = "sine"; o.frequency.value = freq;
+        g.gain.value = gain || 0.04;
+        g.gain.exponentialRampToValueAtTime(0.0001, a.currentTime + (dur || 0.08));
+        o.connect(g); g.connect(a.destination);
+        o.start(); o.stop(a.currentTime + (dur || 0.08));
+      } catch (e) { /* audio optional */ }
+    }
+    return {
+      click: () => blip(880, 0.1, 0.05),
+      tick: () => blip(440, 0.05, 0.025)
+    };
+  })();
+
+  /* ── 11 · Main loop ─────────────────────────────────── */
+  async function pumpHands() {
+    if (!S.modelOk || !hands || !S.camOn || S.sendBusy) return;
+    if (video.readyState < 2) return;
+    S.sendBusy = true;
+    try { await hands.send({ image: video }); }
+    catch (e) { console.warn("hands.send", e); }
+    S.sendBusy = false;
+  }
+
+  function frame(t) {
+    const dt = Math.min(0.05, (t - S.lastT) / 1000 || 0.016);
+    S.lastT = t;
+
+    // feed model ~30 Hz max (busy flag prevents pile-up)
+    pumpHands();
+
+    updatePointer(dt);
+    drawFrame();
+    tickOnboarding(dt);
+    tickPlay();
+
+    // live status when searching
+    if (S.phase === "live" && !S.hand) {
+      setStatus("searching", "show one hand");
+    }
+
+    requestAnimationFrame(frame);
+  }
+
+  /* ── 12 · Toolbar / input ───────────────────────────── */
+  btnMirror.addEventListener("click", () => {
+    S.mirror = !S.mirror;
+    btnMirror.classList.toggle("active", S.mirror);
+    toast(S.mirror ? "Mirror on (selfie)" : "Mirror off", 1400);
+  });
+
+  btnRedo.addEventListener("click", () => {
+    S.findAcc = 0; S.aimAcc = 0;
+    setStep("intro");
+  });
+
+  btnCamOff.addEventListener("click", async () => {
+    if (S.camOn) {
+      stopCamera();
+      toast("Camera stopped — start again to resume", 2000);
+    } else {
+      const ok = await startCamera();
+      if (ok) { toast("Camera on", 1200); if (S.phase === "live") setStatus("searching", "show one hand"); }
+      else toast("Could not start camera", 2000);
+    }
+  });
+
+  // mouse fallback for chips (accessibility / no-hand testing)
+  document.querySelectorAll(".chip").forEach(ch => {
+    ch.addEventListener("click", () => toast(ch.dataset.msg || "✓"));
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "r" && S.phase === "live") setStep("intro");
+    if (e.key === "Escape" && S.phase !== "live") { /* keep modal */ }
+  });
+
+  window.addEventListener("resize", resizeCanvas);
+
+  /* ── 13 · Boot ──────────────────────────────────────── */
+  function boot() {
+    btnMirror.classList.toggle("active", S.mirror);
+    resizeCanvas();
+    initModel();
+    setStep("intro");
+    requestAnimationFrame(frame);
+    if (!S.modelOk) {
+      console.warn("MediaPipe Hands not available yet (CDN) — camera step will re-check");
+    }
+  }
+
+  // If Hands script is still parsing (deferred by network), wait for it
+  if (typeof Hands === "undefined") {
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries++;
+      if (typeof Hands !== "undefined" || tries > 40) { clearInterval(iv); boot(); }
+    }, 100);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>
