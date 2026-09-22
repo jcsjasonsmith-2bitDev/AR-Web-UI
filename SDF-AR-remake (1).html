@@ -1,0 +1,840 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>SDF Hand — Gestures</title>
+<style>
+  :root {
+    --bg: #070b10;
+    --panel: rgba(14, 20, 28, 0.88);
+    --panel-solid: #0e141c;
+    --line: rgba(148, 176, 200, 0.16);
+    --text: #e8eef4;
+    --muted: #8b9aab;
+    --cyan: #45e0d0;
+    --cyan-dim: rgba(69, 224, 208, 0.14);
+    --amber: #f2c96d;
+    --danger: #ff7b72;
+    --ok: #6bcb77;
+    --font: "Segoe UI", system-ui, -apple-system, Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--font); overflow: hidden; }
+  button { font: inherit; cursor: pointer; border: 0; color: inherit; background: none; }
+  button:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+
+  /* Single sharp canvas = video + rig (no dual-layer blur / mirror skew) */
+  #stage { position: fixed; inset: 0; background: #05080c; }
+  #fx { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #cam { position: absolute; width: 2px; height: 2px; opacity: 0; pointer-events: none; left: -10px; top: -10px; }
+  #vignette {
+    position: absolute; inset: 0; pointer-events: none;
+    background: radial-gradient(ellipse at center, transparent 58%, rgba(0,0,0,.42) 100%);
+  }
+
+  #reticle {
+    position: fixed; width: 36px; height: 36px; margin: -18px 0 0 -18px;
+    left: 50%; top: 50%; pointer-events: none; z-index: 40;
+    opacity: 0; transform: scale(.6); transition: opacity .15s, transform .12s;
+    will-change: left, top;
+  }
+  #reticle.on { opacity: 1; transform: scale(1); }
+  #reticle.pressing { transform: scale(.82); }
+  #reticle svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+  #status {
+    position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+    z-index: 50; display: flex; gap: 8px; align-items: center;
+    padding: 8px 14px; border-radius: 999px;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(12px); font-size: 13px; letter-spacing: .02em;
+    opacity: 0; transition: opacity .3s; pointer-events: none;
+  }
+  #status.show { opacity: 1; }
+  #status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  #status.locked .dot { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  #status.searching .dot { background: var(--amber); animation: pulse 1s ease infinite; }
+  #status.err .dot { background: var(--danger); }
+  #status .gest {
+    font-weight: 700; color: var(--cyan); text-transform: uppercase;
+    font-size: 11px; letter-spacing: .12em;
+  }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  #toolbar {
+    position: fixed; right: 14px; top: 14px; z-index: 50;
+    display: flex; gap: 8px; opacity: 0; transition: opacity .3s;
+    pointer-events: none;
+  }
+  #toolbar.show { opacity: 1; pointer-events: auto; }
+  .icon-btn {
+    width: 40px; height: 40px; border-radius: 12px;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(12px); display: grid; place-items: center;
+    font-size: 16px; transition: background .15s, border-color .15s;
+  }
+  .icon-btn:hover { background: rgba(40, 56, 72, .9); border-color: rgba(69,224,208,.35); }
+  .icon-btn.active { border-color: var(--cyan); color: var(--cyan); }
+
+  /* Gesture map — node graph → controls */
+  #gestmap {
+    position: fixed; left: 14px; top: 14px; z-index: 50;
+    display: none; flex-direction: column; gap: 6px;
+    padding: 10px; border-radius: 14px;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(12px); min-width: 148px;
+  }
+  #gestmap.show { display: flex; }
+  #gestmap .g-title {
+    font-size: 10px; font-weight: 700; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--muted); margin-bottom: 2px;
+  }
+  .grow {
+    display: flex; align-items: center; gap: 8px;
+    padding: 7px 8px; border-radius: 9px; font-size: 12.5px; font-weight: 600;
+    border: 1px solid transparent; color: var(--muted);
+    transition: background .12s, border-color .12s, color .12s;
+  }
+  .grow .nodes { display: flex; gap: 3px; }
+  .grow .nodes i {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: rgba(148,176,200,.35); font-style: normal;
+  }
+  .grow .nodes i.hot { background: var(--cyan); box-shadow: 0 0 6px var(--cyan); }
+  .grow.on {
+    background: var(--cyan-dim); border-color: var(--cyan); color: var(--text);
+  }
+  .grow.on .nodes i { background: var(--cyan); }
+  .grow .act { margin-left: auto; font-size: 10px; color: var(--muted); font-weight: 500; }
+  .grow.on .act { color: var(--cyan); }
+
+  #modal {
+    position: fixed; inset: 0; z-index: 60;
+    display: grid; place-items: center; padding: 24px;
+    background: rgba(4, 7, 11, .62); backdrop-filter: blur(8px);
+    transition: opacity .25s;
+  }
+  #modal.hidden { opacity: 0; pointer-events: none; }
+  .card {
+    width: min(440px, 100%); border-radius: 22px;
+    background: var(--panel-solid); border: 1px solid var(--line);
+    padding: 28px 26px 24px; box-shadow: 0 24px 80px rgba(0,0,0,.55);
+    position: relative; overflow: hidden;
+  }
+  .card::before {
+    content: ""; position: absolute; inset: 0 0 auto 0; height: 3px;
+    background: linear-gradient(90deg, var(--cyan), var(--amber));
+  }
+  .eyebrow {
+    font-size: 11px; font-weight: 600; letter-spacing: .14em;
+    text-transform: uppercase; color: var(--cyan); margin-bottom: 10px;
+  }
+  .card h1 { font-size: 26px; line-height: 1.2; font-weight: 650; letter-spacing: -0.02em; margin-bottom: 10px; }
+  .card p { color: var(--muted); font-size: 14.5px; line-height: 1.55; margin-bottom: 8px; }
+  .card p strong { color: var(--text); font-weight: 600; }
+  .card .hint { font-size: 12.5px; color: var(--muted); opacity: .85; }
+  .actions { display: flex; gap: 10px; margin-top: 22px; flex-wrap: wrap; }
+  .btn {
+    padding: 12px 20px; border-radius: 12px; font-weight: 600; font-size: 14.5px;
+    transition: transform .12s, background .15s, opacity .15s;
+  }
+  .btn:active { transform: scale(.97); }
+  .btn-primary { background: var(--cyan); color: #04221e; flex: 1; text-align: center; }
+  .btn-primary:hover { filter: brightness(1.06); }
+  .btn-primary:disabled { opacity: .45; cursor: not-allowed; filter: none; }
+  .btn-ghost { background: transparent; border: 1px solid var(--line); color: var(--muted); }
+  .btn-ghost:hover { color: var(--text); border-color: rgba(148,176,200,.4); }
+
+  /* gesture legend inside intro */
+  .legend { display: grid; gap: 8px; margin-top: 14px; }
+  .legend-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 9px 11px; border-radius: 11px;
+    background: rgba(69,224,208,.06); border: 1px solid rgba(69,224,208,.12);
+    font-size: 13px; font-weight: 600;
+  }
+  .legend-row span { color: var(--muted); font-weight: 500; margin-left: auto; font-size: 12px; }
+  .legend-row b { color: var(--cyan); font-size: 12px; letter-spacing: .06em; }
+
+  #play {
+    position: fixed; left: 0; right: 0; bottom: 0; z-index: 45;
+    padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+    display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;
+    opacity: 0; transform: translateY(12px); transition: opacity .35s, transform .35s;
+    pointer-events: none;
+  }
+  #play.show { opacity: 1; transform: none; pointer-events: auto; }
+  .chip {
+    padding: 11px 16px; border-radius: 14px; font-size: 13.5px; font-weight: 600;
+    background: var(--panel); border: 1px solid var(--line);
+    backdrop-filter: blur(12px); transition: border-color .15s, background .15s, transform .1s;
+    user-select: none;
+  }
+  .chip:hover { border-color: rgba(69,224,208,.5); }
+  .chip.hit { background: var(--cyan-dim); border-color: var(--cyan); transform: scale(.97); color: var(--cyan); }
+  .chip small { display: block; font-weight: 500; color: var(--muted); font-size: 11px; margin-top: 2px; }
+  .chip.hit small { color: rgba(69,224,208,.7); }
+
+  #toast {
+    position: fixed; bottom: 96px; left: 50%; transform: translateX(-50%) translateY(8px);
+    z-index: 58; padding: 10px 16px; border-radius: 12px;
+    background: var(--panel-solid); border: 1px solid var(--line);
+    font-size: 13px; opacity: 0; transition: opacity .25s, transform .25s;
+    pointer-events: none; white-space: nowrap; max-width: 90vw;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .err { color: var(--danger) !important; }
+
+  @media (max-width: 560px) {
+    .card { padding: 22px 18px; }
+    .card h1 { font-size: 22px; }
+    #gestmap { top: auto; bottom: 88px; left: 10px; min-width: 0; }
+    #play { flex-direction: column; align-items: stretch; }
+    .chip { text-align: center; }
+  }
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <video id="cam" playsinline muted autoplay></video>
+  <canvas id="fx"></canvas>
+  <div id="vignette"></div>
+</div>
+
+<div id="reticle" aria-hidden="true">
+  <svg viewBox="0 0 36 36" fill="none">
+    <circle cx="18" cy="18" r="16" stroke="rgba(69,224,208,.35)" stroke-width="1.5"/>
+    <circle cx="18" cy="18" r="10" stroke="#45e0d0" stroke-width="1.75"/>
+    <circle cx="18" cy="18" r="2.5" fill="#45e0d0"/>
+    <path d="M18 0v6M18 30v6M0 18h6M30 18h6" stroke="#45e0d0" stroke-width="1.5" stroke-linecap="round"/>
+  </svg>
+</div>
+
+<div id="status" class="searching">
+  <span class="dot"></span>
+  <span id="statusText">starting…</span>
+  <span class="gest" id="gestLabel"></span>
+</div>
+
+<div id="toolbar">
+  <button class="icon-btn active" id="btnMirror" title="Mirror (selfie)" aria-label="Toggle mirror">⇄</button>
+  <button class="icon-btn" id="btnRedo" title="Start over" aria-label="Start over">↺</button>
+  <button class="icon-btn" id="btnCamOff" title="Camera" aria-label="Toggle camera">⏻</button>
+</div>
+
+<!-- Node graph → gesture controls -->
+<div id="gestmap">
+  <div class="g-title">Node graph → control</div>
+  <div class="grow" id="gPoint">
+    <span class="nodes"><i></i><i class="hot"></i><i></i></span>
+    Point
+    <span class="act">move cursor</span>
+  </div>
+  <div class="grow" id="gPinch">
+    <span class="nodes"><i class="hot"></i><i class="hot"></i><i></i></span>
+    Pinch
+    <span class="act">click</span>
+  </div>
+  <div class="grow" id="gOpen">
+    <span class="nodes"><i></i><i class="hot"></i><i class="hot"></i></span>
+    Open palm
+    <span class="act">select</span>
+  </div>
+  <div class="grow" id="gFist">
+    <span class="nodes"><i class="hot"></i><i></i><i></i></span>
+    Fist
+    <span class="act">hold</span>
+  </div>
+</div>
+
+<div id="play">
+  <button class="chip" data-act="pinch" data-msg="Pinch fired — that’s click.">Pinch = click<small>nodes 4+8</small></button>
+  <button class="chip" data-act="open" data-msg="Open palm = select (same as click).">Open = select<small>splayed fingers</small></button>
+  <button class="chip" data-act="point" data-msg="Point drives the crosshair from node 8.">Point = move<small>index tip</small></button>
+</div>
+
+<div id="toast"></div>
+
+<div id="modal">
+  <div class="card" role="dialog" aria-modal="true">
+    <div id="stepBody"></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/hands.js" crossorigin="anonymous"></script>
+<script>
+/* ═══════════════════════════════════════════════════════════
+   SDF Hand — gesture-mapped MVP
+   • One canvas draws video + 21-node graph (same transform →
+     no wrist skew, no dual-layer blur)
+   • Lite model + short onboarding (intro → camera → live)
+   • Gestures derived from the node graph and mapped to controls:
+       POINT   (index tip lead)     → move cursor
+       PINCH   (4↔8 close)          → click
+       OPEN    (fingers splayed)    → select / activate
+       FIST    (all curled)         → hold / freeze
+   ═══════════════════════════════════════════════════════════ */
+(function () {
+  "use strict";
+
+  /* ── Config ─────────────────────────────────────────── */
+  const CFG = {
+    ema: 0.42,
+    pinchOn: 0.40,
+    pinchOff: 0.55,
+    loseHandMs: 350,
+    mirrorDefault: true,
+    /* MediaPipe: lite = much faster; still solid for gestures */
+    modelComplexity: 0,
+    bones: [
+      [0,1],[1,2],[2,3],[3,4],
+      [0,5],[5,6],[6,7],[7,8],
+      [5,9],[9,10],[10,11],[11,12],
+      [9,13],[13,14],[14,15],[15,16],
+      [13,17],[17,18],[18,19],[19,20],
+      [0,17]
+    ],
+    tips: [4, 8, 12, 16, 20],
+    /* which landmark groups light up in the map UI per gesture */
+    gestNodes: {
+      POINT: [8],
+      PINCH: [4, 8],
+      OPEN: [8, 12, 16],
+      FIST: [4, 8, 12],
+      NONE: []
+    }
+  };
+
+  /* ── DOM ────────────────────────────────────────────── */
+  const $ = (id) => document.getElementById(id);
+  const video = $("cam"), fx = $("fx"), ctx = fx.getContext("2d", { alpha: false });
+  const reticle = $("reticle");
+  const statusEl = $("status"), statusText = $("statusText"), gestLabel = $("gestLabel");
+  const modal = $("modal"), stepBody = $("stepBody");
+  const toastEl = $("toast"), playBar = $("play"), gestMap = $("gestmap");
+  const btnMirror = $("btnMirror"), btnRedo = $("btnRedo"), btnCamOff = $("btnCamOff");
+  const gPoint = $("gPoint"), gPinch = $("gPinch"), gOpen = $("gOpen"), gFist = $("gFist");
+
+  /* ── State ──────────────────────────────────────────── */
+  const S = {
+    phase: "intro",       // intro | camera | live
+    mirror: CFG.mirrorDefault,
+    camOn: false,
+    stream: null,
+    hand: null,
+    handAt: 0,
+    gesture: "NONE",
+    gestureStable: "NONE",
+    gestFrames: 0,
+    ptr: { x: 0.5, y: 0.5, has: false },
+    pressing: false,      // pinch or open = activation
+    holdFist: false,
+    lastT: 0,
+    sendBusy: false,
+    modelOk: false,
+    toastT: 0,
+    fpsAcc: 0, fpsN: 0, fps: 0
+  };
+
+  const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+  const lerp = (a, b, t) => a + (b - a) * t;
+
+  function toast(msg, ms) {
+    toastEl.textContent = msg;
+    toastEl.classList.add("show");
+    clearTimeout(S.toastT);
+    S.toastT = setTimeout(() => toastEl.classList.remove("show"), ms || 2000);
+  }
+
+  function setStatus(mode, text) {
+    statusEl.className = "show " + mode;
+    statusText.textContent = text;
+  }
+
+  /* ── Camera — sharp source (1080p preferred) ────────── */
+  async function startCamera() {
+    if (S.camOn) return true;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: "user",
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+          frameRate: { ideal: 30, max: 30 }
+        },
+        audio: false
+      });
+      /* tighten to actual track resolution if browser negotiated up/down */
+      const track = stream.getVideoTracks()[0];
+      const caps = track.getCapabilities ? track.getCapabilities() : {};
+      if (caps.width) {
+        try {
+          track.applyConstraints({
+            width: { ideal: Math.min(1920, caps.width) },
+            height: { ideal: Math.min(1080, caps.height || 1080) }
+          });
+        } catch (e) { /* keep negotiated */ }
+      }
+      S.stream = stream;
+      video.srcObject = stream;
+      await video.play();
+      S.camOn = true;
+      btnCamOff.classList.remove("active");
+      return true;
+    } catch (e) {
+      console.error(e);
+      S.camOn = false;
+      return false;
+    }
+  }
+
+  function stopCamera() {
+    if (S.stream) S.stream.getTracks().forEach(t => t.stop());
+    S.stream = null;
+    video.srcObject = null;
+    S.camOn = false;
+    S.hand = null;
+    btnCamOff.classList.add("active");
+    reticle.classList.remove("on");
+    if (S.phase === "live") setStatus("err", "camera off");
+  }
+
+  /* ── Model ──────────────────────────────────────────── */
+  let hands = null;
+
+  function initModel() {
+    if (typeof Hands === "undefined") { S.modelOk = false; return false; }
+    if (hands) { S.modelOk = true; return true; }
+    hands = new Hands({
+      locateFile: (f) => "https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1675469240/" + f
+    });
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: CFG.modelComplexity,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.5,
+      selfieMode: false   /* we own the mirror: one transform for video+nodes */
+    });
+    hands.onResults(onHands);
+    S.modelOk = true;
+    return true;
+  }
+
+  function onHands(results) {
+    const now = performance.now();
+    const lm = results.multiHandLandmarks && results.multiHandLandmarks[0];
+    if (lm && lm.length === 21) {
+      S.hand = lm;
+      S.handAt = now;
+      S.gesture = classify(lm);
+      /* 3-frame hysteresis so labels don’t flicker */
+      if (S.gesture === S.gestureStable) S.gestFrames++;
+      else {
+        S.gestFrames++;
+        if (S.gestFrames >= 3) { S.gestureStable = S.gesture; S.gestFrames = 0; }
+      }
+      if (S.gestureStable === S.gesture) S.gestFrames = Math.min(S.gestFrames, 99);
+    } else if (now - S.handAt > CFG.loseHandMs) {
+      S.hand = null;
+      S.gesture = "NONE";
+      S.gestureStable = "NONE";
+      S.gestFrames = 0;
+    }
+  }
+
+  /* ── Node graph → gesture classifier ────────────────── */
+  function fingerExtended(lm, tip, pip, mcp) {
+    /* tip farther from wrist than pip → extended (scale-free) */
+    const w = lm[0];
+    const dTip = Math.hypot(lm[tip].x - w.x, lm[tip].y - w.y);
+    const dPip = Math.hypot(lm[pip].x - w.x, lm[pip].y - w.y);
+    return dTip > dPip * 1.08;
+  }
+
+  function classify(lm) {
+    const size = Math.max(1e-6, Math.hypot(lm[0].x - lm[9].x, lm[0].y - lm[9].y));
+    const pinchR = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y) / size;
+
+    const idxExt = fingerExtended(lm, 8, 6, 5);
+    const midExt = fingerExtended(lm, 12, 10, 9);
+    const rngExt = fingerExtended(lm, 16, 14, 13);
+    const pkyExt = fingerExtended(lm, 20, 18, 17);
+    const extCount = [idxExt, midExt, rngExt, pkyExt].filter(Boolean).length;
+
+    if (pinchR < 0.45) return "PINCH";
+    if (extCount >= 3) return "OPEN";
+    if (extCount === 0) return "FIST";
+    if (idxExt && !midExt) return "POINT";
+    if (extCount >= 2) return "OPEN";
+    return "POINT";
+  }
+
+  /* ── View transform — ONE mapping for video + nodes ─── */
+  function viewXform() {
+    const cw = fx.width, ch = fx.height;
+    const vw = video.videoWidth || 16, vh = video.videoHeight || 9;
+    const scale = Math.max(cw / vw, ch / vh);
+    const dw = vw * scale, dh = vh * scale;
+    return { ox: (cw - dw) / 2, oy: (ch - dh) / 2, dw, dh, cw, ch, scale };
+  }
+
+  /** raw MediaPipe lm → canvas px. Mirror flips X once, here, for everything. */
+  function lmToCanvas(lm, T) {
+    const nx = S.mirror ? (1 - lm.x) : lm.x;
+    return { x: T.ox + nx * T.dw, y: T.oy + lm.y * T.dh };
+  }
+
+  /* ── Pointer from node 8 ────────────────────────────── */
+  function updatePointer() {
+    const live = S.hand && (performance.now() - S.handAt < CFG.loseHandMs);
+    if (!live) {
+      if (performance.now() - S.handAt > CFG.loseHandMs + 350) {
+        reticle.classList.remove("on");
+        if (S.phase === "live") setStatus("searching", "show one hand");
+        gestLabel.textContent = "";
+      }
+      S.pressing = false;
+      reticle.classList.remove("pressing");
+      updateGestureMap();
+      return;
+    }
+
+    const T = viewXform();
+    const tipPx = lmToCanvas(S.hand[8], T);
+    const nx = tipPx.x / T.cw, ny = tipPx.y / T.ch;
+
+    /* fist = freeze cursor; otherwise EMA toward index tip (node 8) */
+    S.holdFist = S.gestureStable === "FIST";
+    if (!S.ptr.has) { S.ptr.x = nx; S.ptr.y = ny; S.ptr.has = true; }
+    else if (!S.holdFist) {
+      const d = Math.hypot(nx - S.ptr.x, ny - S.ptr.y);
+      const a = clamp(CFG.ema + d * 0.45, CFG.ema, 0.7);
+      S.ptr.x = lerp(S.ptr.x, nx, a);
+      S.ptr.y = lerp(S.ptr.y, ny, a);
+    }
+
+    const vpX = S.ptr.x * fx.getBoundingClientRect().width + fx.getBoundingClientRect().left;
+    const vpY = S.ptr.y * fx.getBoundingClientRect().height + fx.getBoundingClientRect().top;
+    reticle.style.left = clamp(vpX, 18, innerWidth - 18) + "px";
+    reticle.style.top = clamp(vpY, 18, innerHeight - 18) + "px";
+    reticle.classList.add("on");
+
+    /* activation: PINCH or OPEN (select) — FIST freezes, POINT only moves */
+    const g = S.gestureStable;
+    const wantPress = (g === "PINCH" || g === "OPEN");
+    S.pressing = wantPress;
+    reticle.classList.toggle("pressing", S.pressing);
+
+    if (S.phase === "live") {
+      setStatus("locked", S.holdFist ? "holding" : "tracking");
+      gestLabel.textContent = g === "NONE" ? "" : g;
+    }
+    updateGestureMap();
+  }
+
+  function updateGestureMap() {
+    const g = S.hand ? S.gestureStable : "NONE";
+    gPoint.classList.toggle("on", g === "POINT");
+    gPinch.classList.toggle("on", g === "PINCH");
+    gOpen.classList.toggle("on", g === "OPEN");
+    gFist.classList.toggle("on", g === "FIST");
+  }
+
+  /* ── Draw: video + node graph, one transform ────────── */
+  function resizeCanvas() {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const w = Math.round(innerWidth * dpr), h = Math.round(innerHeight * dpr);
+    if (fx.width !== w || fx.height !== h) {
+      fx.width = w; fx.height = h;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+    }
+  }
+
+  function drawFrame() {
+    resizeCanvas();
+    const { cw, ch } = { cw: fx.width, ch: fx.height };
+
+    /* 1 · video cover, same mirror as landmarks */
+    if (S.camOn && video.readyState >= 2) {
+      const T = viewXform();
+      ctx.save();
+      if (S.mirror) {
+        /* flip about vertical center of the DRAWN video rect */
+        ctx.translate(cw, 0);
+        ctx.scale(-1, 1);
+        /* after scale(-1), draw at mirrored offset: use raw (unmirrored) rect */
+        ctx.drawImage(video, T.ox, T.oy, T.dw, T.dh);
+      } else {
+        ctx.drawImage(video, T.ox, T.oy, T.dw, T.dh);
+      }
+      ctx.restore();
+      /* letterbox fill */
+      ctx.fillStyle = "#05080c";
+      if (T.oy > 0) {
+        ctx.fillRect(0, 0, cw, T.oy);
+        ctx.fillRect(0, T.oy + T.dh, cw, ch - T.oy - T.dh);
+      }
+      if (T.ox > 0) {
+        ctx.fillRect(0, 0, T.ox, ch);
+        ctx.fillRect(T.ox + T.dw, 0, cw - T.ox - T.dw, ch);
+      }
+    } else {
+      ctx.fillStyle = "#05080c";
+      ctx.fillRect(0, 0, cw, ch);
+    }
+
+    if (!S.hand) return;
+
+    const T = viewXform();
+    const pts = S.hand.map(lm => lmToCanvas(lm, T));
+    const dprScale = fx.width / innerWidth;
+    const g = S.gestureStable;
+
+    /* accent colour by live gesture */
+    const accent =
+      g === "PINCH" ? "#f2c96d" :
+      g === "FIST" ? "#ff9f6b" :
+      g === "OPEN" ? "#6bcb77" :
+      "#45e0d0";
+
+    /* palm */
+    ctx.beginPath();
+    [0, 1, 5, 9, 13, 17].forEach((i, k) => {
+      const p = pts[i];
+      k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y);
+    });
+    ctx.closePath();
+    ctx.fillStyle = accent + "18";
+    ctx.fill();
+    ctx.strokeStyle = accent + "55";
+    ctx.lineWidth = 1.5 * dprScale;
+    ctx.stroke();
+
+    /* bones — highlight chains that define the active gesture */
+    const hot = new Set();
+    if (g === "PINCH") [4, 8].forEach(i => hot.add(i));
+    if (g === "POINT") [8, 7, 6, 5].forEach(i => hot.add(i));
+    if (g === "OPEN") [8, 12, 16, 20].forEach(i => hot.add(i));
+    if (g === "FIST") [4, 8, 12].forEach(i => hot.add(i));
+
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    for (const [a, b] of CFG.bones) {
+      const p = pts[a], q = pts[b];
+      const lit = hot.has(a) && hot.has(b);
+      ctx.beginPath();
+      ctx.moveTo(p.x, p.y);
+      ctx.lineTo(q.x, q.y);
+      ctx.strokeStyle = lit ? accent : "rgba(69,224,208,.88)";
+      ctx.lineWidth = (lit ? 3.4 : 2.4) * dprScale;
+      ctx.stroke();
+    }
+
+    /* joints */
+    for (let i = 0; i < pts.length; i++) {
+      const p = pts[i];
+      const isTip = CFG.tips.indexOf(i) >= 0;
+      const isHot = hot.has(i);
+      const r = (isHot ? 5.2 : isTip ? 4.2 : i === 0 ? 5 : 3.2) * dprScale;
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, r, 0, Math.PI * 2);
+      ctx.fillStyle = i === 0 ? "#f2c96d" : isHot ? accent : isTip ? "#bffff7" : "#45e0d0";
+      if (isHot) {
+        ctx.shadowColor = accent;
+        ctx.shadowBlur = 10 * dprScale;
+      }
+      ctx.fill();
+      ctx.shadowBlur = 0;
+    }
+
+    /* pinch guide circle when pinching */
+    if (g === "PINCH") {
+      ctx.beginPath();
+      ctx.arc(pts[4].x, pts[4].y, Math.hypot(pts[4].x - pts[8].x, pts[4].y - pts[8].y), 0, Math.PI * 2);
+      ctx.strokeStyle = accent + "66";
+      ctx.lineWidth = 1.5 * dprScale;
+      ctx.stroke();
+    }
+  }
+
+  /* ── Activation edge (click) ────────────────────────── */
+  let pressEdge = false;
+  function tickActivation() {
+    if (S.phase !== "live") { pressEdge = false; return; }
+    const was = pressEdge;
+    pressEdge = S.pressing;
+    if (was || !pressEdge) return;
+
+    const el = document.elementFromPoint(
+      clamp(parseFloat(reticle.style.left) || innerWidth / 2, 0, innerWidth),
+      clamp(parseFloat(reticle.style.top) || innerHeight / 2, 0, innerHeight)
+    );
+    const chip = el && el.closest ? el.closest(".chip") : null;
+    if (chip) {
+      chip.classList.add("hit");
+      setTimeout(() => chip.classList.remove("hit"), 320);
+      toast(chip.dataset.msg || "✓");
+      Sound.click();
+    } else {
+      toast(S.gestureStable === "OPEN" ? "select" : "click", 900);
+      Sound.tick();
+    }
+  }
+
+  const Sound = (() => {
+    let ac = null;
+    function blip(freq, dur, gain) {
+      try {
+        if (!ac) ac = new (window.AudioContext || window.webkitAudioContext)();
+        const o = ac.createOscillator(), g = ac.createGain();
+        o.type = "sine"; o.frequency.value = freq;
+        g.gain.value = gain || 0.04;
+        g.gain.exponentialRampToValueAtTime(0.0001, ac.currentTime + (dur || 0.08));
+        o.connect(g); g.connect(ac.destination);
+        o.start(); o.stop(ac.currentTime + (dur || 0.08));
+      } catch (e) { /* optional */ }
+    }
+    return { click: () => blip(880, .1, .05), tick: () => blip(440, .05, .025) };
+  })();
+
+  /* ── Onboarding: two steps only ─────────────────────── */
+  function setStep(phase) {
+    S.phase = phase;
+    const live = phase === "live";
+    modal.classList.toggle("hidden", live);
+    playBar.classList.toggle("show", live);
+    $("toolbar").classList.toggle("show", live);
+    gestMap.classList.toggle("show", live);
+    if (!live) {
+      statusEl.classList.remove("show");
+      renderStep();
+    } else {
+      setStatus("searching", "show one hand");
+      toast("Point → move · Pinch/Open → click · Fist → hold", 3600);
+    }
+  }
+
+  function renderStep() {
+    const p = S.phase;
+    if (p === "intro") {
+      stepBody.innerHTML = `
+        <div class="eyebrow">SDF Hand · Gestures</div>
+        <h1>The node graph <em>is</em> the controller</h1>
+        <p>One hand → 21 nodes → four controls. No tutorial maze.</p>
+        <div class="legend">
+          <div class="legend-row"><b>POINT</b> index tip <span>move cursor</span></div>
+          <div class="legend-row"><b>PINCH</b> thumb+index <span>click</span></div>
+          <div class="legend-row"><b>OPEN</b> splayed <span>select</span></div>
+          <div class="legend-row"><b>FIST</b> closed <span>hold still</span></div>
+        </div>
+        <p class="hint" style="margin-top:14px">Camera stays on your device. Needs network once to load the hand model.</p>
+        <div class="actions">
+          <button class="btn btn-primary" id="go1">Enable camera &amp; go</button>
+        </div>`;
+      $("go1").onclick = async () => {
+        const btn = $("go1");
+        btn.disabled = true;
+        btn.textContent = "Starting…";
+        const ok = await startCamera();
+        if (!ok) {
+          btn.disabled = false;
+          btn.textContent = "Try again";
+          const h = stepBody.querySelector(".hint");
+          h.className = "hint err";
+          h.textContent = navigator.mediaDevices
+            ? "Camera blocked — allow it in the address bar, then retry."
+            : "Needs https:// or localhost for camera.";
+          return;
+        }
+        if (!S.modelOk && !initModel()) {
+          btn.disabled = false;
+          btn.textContent = "Try again";
+          const h = stepBody.querySelector(".hint");
+          h.className = "hint err";
+          h.textContent = "Hand model didn’t load — check internet once, then reload.";
+          return;
+        }
+        setStep("live");
+      };
+    }
+  }
+
+  /* ── Main loop ──────────────────────────────────────── */
+  async function pumpHands() {
+    if (!S.modelOk || !hands || !S.camOn || S.sendBusy) return;
+    if (video.readyState < 2) return;
+    S.sendBusy = true;
+    try { await hands.send({ image: video }); }
+    catch (e) { console.warn("hands.send", e); }
+    S.sendBusy = false;
+  }
+
+  function frame(t) {
+    const dt = t - S.lastT;
+    S.lastT = t;
+    /* fps */
+    if (dt > 0) { S.fpsAcc += dt; S.fpsN++; if (S.fpsN >= 20) { S.fps = Math.round(1000 / (S.fpsAcc / S.fpsN)); S.fpsAcc = 0; S.fpsN = 0; } }
+
+    pumpHands();
+    updatePointer();
+    drawFrame();
+    tickActivation();
+    requestAnimationFrame(frame);
+  }
+
+  /* ── Toolbar ────────────────────────────────────────── */
+  btnMirror.addEventListener("click", () => {
+    S.mirror = !S.mirror;
+    btnMirror.classList.toggle("active", S.mirror);
+    toast(S.mirror ? "Mirror on — wrist matches selfie view" : "Mirror off — raw camera", 1600);
+  });
+
+  btnRedo.addEventListener("click", () => setStep("intro"));
+
+  btnCamOff.addEventListener("click", async () => {
+    if (S.camOn) {
+      stopCamera();
+      toast("Camera off", 1500);
+    } else {
+      const ok = await startCamera();
+      if (ok) { toast("Camera on", 1200); if (S.phase === "live") setStatus("searching", "show one hand"); }
+      else toast("Could not start camera", 2000);
+    }
+  });
+
+  document.querySelectorAll(".chip").forEach(ch => {
+    ch.addEventListener("click", () => toast(ch.dataset.msg || "✓"));
+  });
+
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "r" && S.phase === "live") setStep("intro");
+  });
+  window.addEventListener("resize", resizeCanvas);
+
+  /* ── Boot ───────────────────────────────────────────── */
+  function boot() {
+    btnMirror.classList.toggle("active", S.mirror);
+    resizeCanvas();
+    initModel();
+    setStep("intro");
+    requestAnimationFrame(frame);
+    /* warm the model graph so first frame after camera is snappy */
+    if (hands && hands.initialize) { try { hands.initialize(); } catch (e) {} }
+  }
+
+  if (typeof Hands === "undefined") {
+    let tries = 0;
+    const iv = setInterval(() => {
+      tries++;
+      if (typeof Hands !== "undefined" || tries > 50) { clearInterval(iv); boot(); }
+    }, 80);
+  } else {
+    boot();
+  }
+})();
+</script>
+</body>
+</html>
